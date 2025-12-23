@@ -836,7 +836,7 @@ def generate_all_batch_charts():
 def main():
     # 文件上传部分
     st.markdown("---")
-    st.markdown("### 📁 上传学生成绩文件")
+    st.markdown("### 📁 上传辅助文件")
     
     uploaded_file = st.file_uploader(
         "选择Excel文件（支持.xlsx, .xls格式）",
@@ -1774,4 +1774,5 @@ def main():
 # 运行应用
 if __name__ == "__main__":
     main()
+
 
