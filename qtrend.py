@@ -413,8 +413,8 @@ class ExamWeightCalculator:
     def __init__(self):
         # 考试类型权重
         self.exam_type_weights = {
-            '期末': 1.0, '期中': 0.85, '月考': 0.7, '模拟': 0.8,
-            '联考': 0.9, '五校': 0.88, '八校': 0.86, '质检': 0.75
+            '期末': 1.0, '期中': 0.5, '月考': 0.9, '模拟': 0.5,
+            '联考': 0.5, '五校': 0.5, '八校': 0.5, '质检': 0.5
         }
         self.time_decay_rate = 0.15  # 时间衰减率
         self.recent_weight_boost = 0.2  # 近期考试额外权重
@@ -4583,3 +4583,4 @@ def main():
 # 运行应用
 if __name__ == "__main__":
     main()
+
