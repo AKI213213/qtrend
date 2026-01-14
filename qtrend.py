@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 13 09:58:32 2026
-
-@author: redmiG2021
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1589,7 +1582,7 @@ def module_single_student_query():
     
     st.markdown("""
     **使用说明**：
-    1. 在左侧选择班级和学生
+    1. 选择班级和学生
     2. 系统将自动显示该学生的成绩数据
     3. 您可以选择要显示的科目和是否显示排名
     4. 可以下载成绩数据和图表
@@ -2183,420 +2176,713 @@ def module_batch_student_query():
                     st.markdown("---")
 
 # ============================================
-# 模块4: 学生成绩分析、预测（增强版） - 包含批量预测
-# 包含智能预测选择：根据数据量和模型性能自动选择最佳预测方法
-# 新增批量预测功能：支持选择学生批量预测和全班批量预测
+# 模块4: 学生成绩分析、预测（智能版）
+# 结合趋势感知、迁移学习和聚类分析的智能预测系统
 # ============================================
 
 # 导入必要的库
-import numpy as np
-import pandas as pd
-import streamlit as st
-import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
-from typing import List, Dict, Tuple, Optional, Union
-import warnings
-warnings.filterwarnings('ignore')
+from typing import List, Dict, Tuple, Optional, Union, Any
+from collections import defaultdict
+import math
+from scipy import stats
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+import hashlib
 
-# 导入机器学习库
+# 尝试导入statsmodels
 try:
-    from sklearn.linear_model import LinearRegression, Ridge
-    from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-    sklearn_available = True
+    import statsmodels.api as sm
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    from statsmodels.tsa.api import SimpleExpSmoothing
+    statsmodels_available = True
 except ImportError:
-    sklearn_available = False
-    st.warning("警告：scikit-learn库未安装。机器学习预测功能将不可用。")
-    st.info("请运行: pip install scikit-learn")
-
+    statsmodels_available = False
+    st.warning("注意：statsmodels库未安装，将使用替代方法。")
 
 # ============================================
-# 智能成绩预测器类（带多层回退机制）
+# 智能成绩预测器类
+# 结合趋势感知、迁移学习和聚类分析
 # ============================================
-class SmartGradePredictor:
+class IntelligentGradePredictor:
     """
     智能成绩预测器
-    根据数据量和模型性能自动选择最佳预测方法
-    包含多层回退机制
+    结合多种技术解决小样本过拟合和趋势识别问题
     """
     
-    def __init__(self, window_size: int = 3, test_size: float = 0.2):
+    def __init__(self, all_students_data: pd.DataFrame = None):
         """
         初始化智能预测器
         
         Args:
-            window_size: 滑动窗口大小
-            test_size: 测试集比例
+            all_students_data: 所有学生数据（用于迁移学习和聚类）
         """
-        self.window_size = window_size
-        self.test_size = test_size
+        self.all_students_data = all_students_data
+        self.pattern_cache = {}  # 模式缓存
+        self.cluster_models = {}  # 聚类模型缓存
         
-        # 定义可用的机器学习模型
-        self.models = {
-            'linear_regression': {
-                'model': LinearRegression() if sklearn_available else None,
-                'name': '线性回归',
-                'description': '捕捉线性趋势',
-                'min_data_points': 6
-            },
-            'ridge_regression': {
-                'model': Ridge(alpha=1.0) if sklearn_available else None,
-                'name': '岭回归',
-                'description': '防止过拟合',
-                'min_data_points': 6
-            },
-            'random_forest': {
-                'model': RandomForestRegressor(n_estimators=50, random_state=42) if sklearn_available else None,
-                'name': '随机森林',
-                'description': '捕捉非线性关系',
-                'min_data_points': 8
-            },
-            'gradient_boosting': {
-                'model': GradientBoostingRegressor(n_estimators=50, random_state=42) if sklearn_available else None,
-                'name': '梯度提升树',
-                'description': '强大的集成算法',
-                'min_data_points': 8
-            }
-        }
-        
-        # 特征标准化器
-        self.scaler = StandardScaler() if sklearn_available else None
-        
-        # 存储训练结果
-        self.training_results = {}
-        self.best_model_name = None
-        self.best_model = None
-        self.selected_method = "加权线性回归"  # 默认方法
-    
-    def create_features(self, scores: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def analyze_student_pattern(self, student_scores: np.ndarray) -> Dict[str, Any]:
         """
-        从成绩序列创建特征和标签
+        深度分析学生成绩模式
         
         Args:
-            scores: 成绩数组
+            student_scores: 学生成绩数组
             
         Returns:
-            X: 特征矩阵
-            y: 标签数组
+            模式分析字典
         """
-        X, y = [], []
+        if len(student_scores) < 2:
+            return {"trend": "insufficient_data", "pattern": "unknown"}
         
-        for i in range(len(scores) - self.window_size):
-            # 使用滑动窗口创建特征
-            window = scores[i:i + self.window_size]
-            
-            # 基础特征
-            features = list(window)
-            
-            # 统计特征
-            features.append(np.mean(window))
-            features.append(np.std(window) if len(window) > 1 else 0)
-            features.append(np.min(window))
-            features.append(np.max(window))
-            
-            # 趋势特征
-            if len(window) >= 2:
-                features.append(window[-1] - window[0])
-                features.append((window[-1] - window[0]) / max(len(window)-1, 1))
-            
-            # 时间特征
-            features.append(i)
-            features.append(len(scores) - i)
-            
-            X.append(features)
-            y.append(scores[i + self.window_size])
+        # 1. 计算基本统计
+        scores = student_scores.astype(float)
+        mean_score = np.mean(scores)
+        std_score = np.std(scores) if len(scores) > 1 else 0
         
-        return np.array(X), np.array(y)
-    
-    def train_ml_models(self, scores: np.ndarray, exam_names: List[str] = None) -> Dict:
-        """
-        训练机器学习模型
-        
-        Args:
-            scores: 成绩数组
-            exam_names: 考试名称列表
+        # 2. 计算短期和长期趋势
+        if len(scores) >= 2:
+            # 整体趋势
+            time_indices = np.arange(len(scores))
+            slope, intercept = np.polyfit(time_indices, scores, 1)
             
-        Returns:
-            训练结果字典
-        """
-        if not sklearn_available or len(scores) < 6:
-            return {}
-        
-        try:
-            # 创建特征和标签
-            X, y = self.create_features(scores)
+            # 近期趋势（最近3次考试）
+            recent_slope = 0
+            if len(scores) >= 3:
+                recent_indices = np.arange(max(0, len(scores)-3), len(scores))
+                recent_scores = scores[-3:]
+                if len(recent_scores) >= 2:
+                    recent_slope, _ = np.polyfit(recent_indices - recent_indices[0], recent_scores, 1)
             
-            if len(X) < 5:
-                return {}
+            # 趋势强度
+            trend_strength = abs(slope) / (std_score + 1e-6) if std_score > 0 else 0
             
-            # 划分训练集和测试集
-            split_idx = int(len(X) * (1 - self.test_size))
-            X_train, X_test = X[:split_idx], X[split_idx:]
-            y_train, y_test = y[:split_idx], y[split_idx:]
+            # 3. 检测模式变化点
+            has_pattern_change = False
+            change_point = None
             
-            if len(X_test) == 0:
-                return {}
+            if len(scores) >= 4:
+                # 使用滑动窗口检测变化
+                window_size = min(3, len(scores) // 2)
+                for i in range(window_size, len(scores) - window_size + 1):
+                    before_mean = np.mean(scores[:i])
+                    after_mean = np.mean(scores[i:])
+                    if abs(after_mean - before_mean) > 2 * std_score and std_score > 0:
+                        has_pattern_change = True
+                        change_point = i
+                        break
             
-            # 特征标准化
-            X_train_scaled = self.scaler.fit_transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
+            # 4. 确定模式类型
+            pattern_type = "unknown"
             
-            # 训练模型
-            self.training_results = {}
+            if trend_strength > 0.3:  # 强趋势
+                if slope > 0.5:
+                    pattern_type = "strong_upward"
+                elif slope < -0.5:
+                    pattern_type = "strong_downward"
+                elif abs(slope) <= 0.5:
+                    pattern_type = "stable"
+            else:  # 弱趋势
+                if abs(recent_slope) > 0.5:  # 近期有明显趋势
+                    if recent_slope > 0:
+                        pattern_type = "recent_upward"
+                    else:
+                        pattern_type = "recent_downward"
+                else:
+                    if std_score < 5:  # 低波动
+                        pattern_type = "stable_low_volatility"
+                    else:  # 高波动
+                        pattern_type = "volatile"
             
-            for model_name, model_info in self.models.items():
-                if model_info['model'] is None or len(scores) < model_info['min_data_points']:
-                    continue
-                
-                model = model_info['model']
-                
-                try:
-                    # 训练模型
-                    model.fit(X_train_scaled, y_train)
-                    
-                    # 预测
-                    y_train_pred = model.predict(X_train_scaled)
-                    y_test_pred = model.predict(X_test_scaled)
-                    
-                    # 计算指标
-                    train_r2 = r2_score(y_train, y_train_pred)
-                    test_r2 = r2_score(y_test, y_test_pred)
-                    test_rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
-                    
-                    # 存储结果
-                    self.training_results[model_name] = {
-                        'model': model,
-                        'name': model_info['name'],
-                        'description': model_info['description'],
-                        'train_r2': train_r2,
-                        'test_r2': test_r2,
-                        'test_rmse': test_rmse,
-                        'y_test_pred': y_test_pred
-                    }
-                    
-                except Exception as e:
-                    continue
-            
-            # 选择最佳模型（基于测试集R²）
-            if self.training_results:
-                valid_models = {k: v for k, v in self.training_results.items() if v['test_r2'] > 0}
-                if valid_models:
-                    self.best_model_name = max(
-                        valid_models.keys(),
-                        key=lambda x: valid_models[x]['test_r2']
-                    )
-                    self.best_model = self.training_results[self.best_model_name]['model']
-            
-            return self.training_results
-            
-        except Exception as e:
-            return {}
-    
-    def predict_with_ml(self, scores: np.ndarray) -> Dict:
-        """
-        使用机器学习预测
-        
-        Args:
-            scores: 历史成绩数组
-            
-        Returns:
-            预测结果字典
-        """
-        if (not sklearn_available or not self.best_model or 
-            len(scores) < self.window_size):
-            return {}
-        
-        try:
-            # 创建最新窗口的特征
-            last_window = scores[-self.window_size:]
-            
-            # 构建特征
-            features = list(last_window)
-            features.append(np.mean(last_window))
-            features.append(np.std(last_window) if len(last_window) > 1 else 0)
-            features.append(np.min(last_window))
-            features.append(np.max(last_window))
-            
-            if len(last_window) >= 2:
-                features.append(last_window[-1] - last_window[0])
-                features.append((last_window[-1] - last_window[0]) / max(len(last_window)-1, 1))
-            
-            features.append(len(scores) - 1)
-            features.append(1)
-            
-            features = np.array(features).reshape(1, -1)
-            features_scaled = self.scaler.transform(features)
-            
-            # 预测
-            prediction = self.best_model.predict(features_scaled)[0]
-            
-            # 计算置信度
-            best_model_info = self.training_results[self.best_model_name]
-            test_r2 = best_model_info['test_r2']
-            test_rmse = best_model_info['test_rmse']
-            
-            # 置信度计算
-            if test_r2 < 0:
-                confidence_score = 0.1
-            elif test_r2 < 0.3:
-                confidence_score = 0.3 + test_r2
-            else:
-                confidence_score = 0.5 + 0.5 * test_r2
-            
-            confidence_score = max(0.1, min(0.95, confidence_score))
-            confidence_interval = 1.96 * test_rmse if test_rmse > 0 else 5.0
+            # 考虑模式变化
+            if has_pattern_change and change_point:
+                if pattern_type in ["stable", "stable_low_volatility"]:
+                    pattern_type = f"changed_at_{change_point}"
             
             return {
-                'prediction': prediction,
-                'confidence_interval': confidence_interval,
-                'confidence_score': confidence_score,
-                'model_name': best_model_info['name'],
-                'model_description': best_model_info['description'],
-                'test_r2': test_r2,
-                'test_rmse': test_rmse,
-                'method': '机器学习'
+                "pattern_type": pattern_type,
+                "slope": float(slope),
+                "recent_slope": float(recent_slope),
+                "mean": float(mean_score),
+                "std": float(std_score),
+                "trend_strength": float(trend_strength),
+                "has_pattern_change": has_pattern_change,
+                "change_point": change_point,
+                "data_points": len(scores)
             }
-            
-        except Exception as e:
-            return {}
+        
+        return {"pattern": "insufficient_data"}
     
-    def predict_with_weighted_regression(self, scores: np.ndarray, exam_names: List[str] = None) -> Dict:
+    def adaptive_weighted_average(self, scores: np.ndarray, pattern_info: Dict) -> np.ndarray:
         """
-        使用加权线性回归预测
+        自适应加权平均
+        根据模式动态调整权重
         
         Args:
             scores: 成绩数组
-            exam_names: 考试名称列表
+            pattern_info: 模式信息
             
         Returns:
-            预测结果字典
+            权重数组
         """
-        try:
-            enhanced_analyzer = EnhancedGradeTrendAnalyzer()
-            trend_result = enhanced_analyzer.calculate_trend_stats(scores, exam_names or [])
-            
-            if 'next_grade' in trend_result:
-                # 计算置信度
-                stability = trend_result.get('stability', 0.3)
-                confidence_score = max(0.5, 1.0 - stability)
-                confidence_interval = 5 + 2 * (1 - confidence_score)
-                
-                return {
-                    'prediction': trend_result['next_grade'],
-                    'confidence_interval': confidence_interval,
-                    'confidence_score': confidence_score,
-                    'model_name': '加权线性回归',
-                    'model_description': '考虑考试权重的时间序列预测',
-                    'trend': trend_result.get('trend', '未知'),
-                    'stability': stability,
-                    'method': '加权线性回归'
-                }
-            
-        except Exception as e:
-            pass
-        
-        return {}
-    
-    def predict_with_simple_average(self, scores: np.ndarray) -> Dict:
-        """
-        使用简单加权平均预测
-        
-        Args:
-            scores: 成绩数组
-            
-        Returns:
-            预测结果字典
-        """
-        if len(scores) < 3:
-            return {}
-        
-        # 给最近成绩更高权重
-        weights = []
         n = len(scores)
         
-        for i in range(n):
-            weight = 0.5 + 0.5 * (i / (n-1)) if n > 1 else 1.0
-            weights.append(weight)
+        # 基础权重：给近期更高权重
+        base_weights = np.linspace(0.5, 1.5, n)
         
-        weights = np.array(weights)
-        weights = weights / weights.sum()
+        # 根据模式调整权重
+        pattern_type = pattern_info.get("pattern_type", "unknown")
+        
+        if pattern_type in ["strong_upward", "recent_upward"]:
+            # 上升趋势：给近期成绩更高权重
+            adjusted_weights = base_weights * np.exp(np.linspace(-0.5, 0.5, n))
+        elif pattern_type in ["strong_downward", "recent_downward"]:
+            # 下降趋势：适当降低近期权重，防止过度悲观
+            if pattern_info.get("trend_strength", 0) > 0.5:
+                # 强下降趋势，降低近期权重
+                adjusted_weights = base_weights * np.exp(np.linspace(0.3, -0.3, n))
+            else:
+                # 弱下降趋势，保持权重
+                adjusted_weights = base_weights
+        elif pattern_type in ["stable", "stable_low_volatility"]:
+            # 稳定模式：更均匀的权重
+            adjusted_weights = np.ones(n)
+        elif "changed_at" in pattern_type:
+            # 模式变化：变化点后的数据权重更高
+            change_point = pattern_info.get("change_point", n//2)
+            adjusted_weights = np.ones(n)
+            adjusted_weights[change_point:] *= 1.5
+        else:
+            # 波动模式：降低极端值的权重
+            adjusted_weights = base_weights * 0.8 + 0.2
+        
+        # 归一化权重
+        if adjusted_weights.sum() > 0:
+            adjusted_weights = adjusted_weights / adjusted_weights.sum()
+        
+        return adjusted_weights
+    
+    def find_similar_students(self, target_scores: np.ndarray, all_students_scores: Dict[str, np.ndarray], 
+                             n_similar: int = 5) -> List[Tuple[str, float]]:
+        """
+        寻找相似学生（迁移学习）
+        
+        Args:
+            target_scores: 目标学生成绩
+            all_students_scores: 所有学生成绩字典 {学生名: 成绩数组}
+            n_similar: 返回的最相似学生数量
+            
+        Returns:
+            相似学生列表 [(学生名, 相似度分数), ...]
+        """
+        if len(all_students_scores) == 0 or len(target_scores) < 2:
+            return []
+        
+        similarities = []
+        target_len = len(target_scores)
+        
+        for student_name, scores in all_students_scores.items():
+            if len(scores) < 2:
+                continue
+            
+            # 截取相同长度的成绩序列进行比较
+            compare_len = min(target_len, len(scores))
+            target_subset = target_scores[-compare_len:]
+            student_subset = scores[-compare_len:]
+            
+            # 计算相似度（使用多种指标的综合）
+            similarity_score = self.calculate_similarity(target_subset, student_subset)
+            
+            if similarity_score > 0.3:  # 相似度阈值
+                similarities.append((student_name, similarity_score))
+        
+        # 按相似度排序
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        return similarities[:n_similar]
+    
+    def calculate_similarity(self, scores1: np.ndarray, scores2: np.ndarray) -> float:
+        """
+        计算两个成绩序列的相似度
+        
+        Args:
+            scores1: 成绩序列1
+            scores2: 成绩序列2
+            
+        Returns:
+            相似度分数 (0-1)
+        """
+        if len(scores1) != len(scores2) or len(scores1) < 2:
+            return 0.0
+        
+        # 1. 皮尔逊相关系数
+        try:
+            correlation, _ = stats.pearsonr(scores1, scores2)
+            correlation_score = max(0, correlation)  # 负相关视为不相似
+        except:
+            correlation_score = 0.0
+        
+        # 2. 趋势相似度
+        slope1, _ = np.polyfit(np.arange(len(scores1)), scores1, 1)
+        slope2, _ = np.polyfit(np.arange(len(scores2)), scores2, 1)
+        trend_similarity = 1.0 - min(1.0, abs(slope1 - slope2) / 2.0)
+        
+        # 3. 水平相似度
+        mean1, mean2 = np.mean(scores1), np.mean(scores2)
+        level_similarity = 1.0 - min(1.0, abs(mean1 - mean2) / 20.0)
+        
+        # 4. 波动性相似度
+        std1, std2 = np.std(scores1) if len(scores1) > 1 else 0, np.std(scores2) if len(scores2) > 1 else 0
+        volatility_similarity = 1.0 - min(1.0, abs(std1 - std2) / 10.0)
+        
+        # 综合相似度
+        weights = [0.4, 0.3, 0.2, 0.1]  # 相关性权重最高
+        similarity = (weights[0] * correlation_score + 
+                     weights[1] * trend_similarity + 
+                     weights[2] * level_similarity + 
+                     weights[3] * volatility_similarity)
+        
+        return similarity
+    
+    def cluster_students_by_pattern(self, all_students_scores: Dict[str, np.ndarray], 
+                                  n_clusters: int = 3) -> Dict[str, int]:
+        """
+        按成绩模式对学生进行聚类
+        
+        Args:
+            all_students_scores: 所有学生成绩字典
+            n_clusters: 聚类数量
+            
+        Returns:
+            聚类结果字典 {学生名: 聚类标签}
+        """
+        if len(all_students_scores) < n_clusters * 2:  # 样本太少不适合聚类
+            return {name: 0 for name in all_students_scores.keys()}
+        
+        # 提取特征
+        features = []
+        student_names = []
+        
+        for name, scores in all_students_scores.items():
+            if len(scores) >= 3:  # 至少3个数据点
+                # 特征：均值、标准差、斜率、最近变化
+                mean = np.mean(scores)
+                std = np.std(scores) if len(scores) > 1 else 0
+                
+                # 计算斜率
+                if len(scores) >= 2:
+                    time_indices = np.arange(len(scores))
+                    slope, _ = np.polyfit(time_indices, scores, 1)
+                else:
+                    slope = 0
+                
+                # 最近变化
+                if len(scores) >= 2:
+                    recent_change = scores[-1] - scores[-2]
+                else:
+                    recent_change = 0
+                
+                features.append([mean, std, slope, recent_change])
+                student_names.append(name)
+        
+        if len(features) < n_clusters:
+            return {name: 0 for name in all_students_scores.keys()}
+        
+        # 标准化特征
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features)
+        
+        # 聚类
+        try:
+            kmeans = KMeans(n_clusters=min(n_clusters, len(features)), 
+                          random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(features_scaled)
+            
+            # 计算轮廓系数
+            if len(set(cluster_labels)) > 1:
+                silhouette_avg = silhouette_score(features_scaled, cluster_labels)
+            else:
+                silhouette_avg = 0.0
+            
+            # 创建聚类结果字典
+            clustering_result = {}
+            for i, name in enumerate(student_names):
+                clustering_result[name] = int(cluster_labels[i])
+            
+            # 为没有足够数据的学生分配默认聚类
+            for name in all_students_scores.keys():
+                if name not in clustering_result:
+                    clustering_result[name] = 0
+            
+            # 缓存聚类信息
+            self.cluster_models['kmeans'] = kmeans
+            self.cluster_models['scaler'] = scaler
+            self.cluster_models['silhouette'] = silhouette_avg
+            
+            return clustering_result
+            
+        except Exception as e:
+            # 聚类失败，返回默认聚类
+            return {name: 0 for name in all_students_scores.keys()}
+    
+    def predict_with_transfer_learning(self, target_scores: np.ndarray, 
+                                      similar_students: List[Tuple[str, float]],
+                                      all_students_scores: Dict[str, np.ndarray]) -> float:
+        """
+        使用迁移学习进行预测
+        
+        Args:
+            target_scores: 目标学生成绩
+            similar_students: 相似学生列表
+            all_students_scores: 所有学生成绩字典
+            
+        Returns:
+            预测成绩
+        """
+        if not similar_students:
+            return None
+        
+        predictions = []
+        weights = []
+        
+        for student_name, similarity in similar_students:
+            if similarity < 0.4:  # 相似度阈值
+                continue
+                
+            student_scores = all_students_scores[student_name]
+            if len(student_scores) <= len(target_scores):
+                # 相似学生的后续成绩不可用
+                continue
+            
+            # 使用相似学生的后续成绩作为参考
+            next_score = student_scores[len(target_scores)]  # 对应位置的下一次成绩
+            predictions.append(next_score)
+            weights.append(similarity)
+        
+        if not predictions:
+            return None
         
         # 加权平均
-        prediction = np.dot(scores, weights)
+        weights = np.array(weights)
+        predictions = np.array(predictions)
         
-        # 计算波动性
-        volatility = np.std(scores[-min(3, len(scores)):]) if len(scores) >= 2 else 5.0
-        confidence_score = max(0.4, 0.8 - 0.1 * volatility)
-        confidence_interval = 3 + volatility
+        if weights.sum() > 0:
+            weighted_prediction = np.sum(predictions * weights) / weights.sum()
+            return float(weighted_prediction)
         
-        return {
-            'prediction': prediction,
-            'confidence_interval': confidence_interval,
-            'confidence_score': confidence_score,
-            'model_name': '加权平均',
-            'model_description': '基于近期成绩的加权平均预测',
-            'method': '加权平均'
-        }
+        return None
     
-    def smart_predict(self, scores: np.ndarray, exam_names: List[str] = None) -> Dict:
+    def trend_aware_prediction(self, scores: np.ndarray, pattern_info: Dict) -> Dict[str, Any]:
         """
-        智能预测：根据数据量和模型性能自动选择最佳方法
+        趋势感知预测
         
         Args:
             scores: 成绩数组
-            exam_names: 考试名称列表
+            pattern_info: 模式信息
+            
+        Returns:
+            预测结果
+        """
+        n = len(scores)
+        
+        # 根据模式选择预测方法
+        pattern_type = pattern_info.get("pattern_type", "unknown")
+        slope = pattern_info.get("slope", 0)
+        recent_slope = pattern_info.get("recent_slope", 0)
+        trend_strength = pattern_info.get("trend_strength", 0)
+        
+        # 基础预测（加权平均）
+        weights = self.adaptive_weighted_average(scores, pattern_info)
+        base_prediction = np.sum(scores * weights)
+        
+        # 趋势调整
+        trend_adjustment = 0
+        
+        if pattern_type in ["strong_upward", "recent_upward"]:
+            # 上升趋势：基于斜率调整
+            if abs(slope) > 0.2:
+                trend_adjustment = slope * 0.8  # 调整幅度
+        elif pattern_type in ["strong_downward", "recent_downward"]:
+            # 下降趋势：谨慎调整
+            if abs(slope) > 0.3:
+                trend_adjustment = slope * 0.5
+        elif pattern_type == "stable":
+            # 稳定模式：小幅调整
+            trend_adjustment = recent_slope * 0.3
+        elif "changed_at" in pattern_type:
+            # 模式变化：主要基于近期数据
+            change_point = pattern_info.get("change_point", n//2)
+            recent_scores = scores[change_point:] if change_point < n else scores
+            if len(recent_scores) >= 2:
+                recent_slope, _ = np.polyfit(np.arange(len(recent_scores)), recent_scores, 1)
+                trend_adjustment = recent_slope * 0.7
+        
+        # 最终预测
+        final_prediction = base_prediction + trend_adjustment
+        
+        # 置信度计算
+        data_points = n
+        volatility = pattern_info.get("std", 5)
+        
+        data_sufficiency = min(1.0, data_points / 6.0)
+        stability = max(0.1, 1.0 - volatility / 15.0)
+        
+        # 模式置信度
+        if pattern_type in ["strong_upward", "strong_downward", "stable"]:
+            pattern_confidence = 0.8
+        elif pattern_type in ["recent_upward", "recent_downward"]:
+            pattern_confidence = 0.6
+        else:
+            pattern_confidence = 0.4
+        
+        confidence = 0.3 + 0.3 * data_sufficiency + 0.2 * stability + 0.2 * pattern_confidence
+        confidence = min(0.9, max(0.3, confidence))
+        
+        confidence_interval = 2 + 1.5 * volatility
+        
+        return {
+            'prediction': float(final_prediction),
+            'confidence_interval': float(confidence_interval),
+            'confidence_score': float(confidence),
+            'pattern': pattern_type,
+            'slope': float(slope),
+            'trend_strength': float(trend_strength),
+            'method': '趋势感知预测',
+            'base_prediction': float(base_prediction),
+            'trend_adjustment': float(trend_adjustment)
+        }
+    
+    def smart_predict(self, scores: np.ndarray, student_name: str = None, 
+                     all_students_data: Dict[str, np.ndarray] = None) -> Dict[str, Any]:
+        """
+        智能预测主函数
+        
+        Args:
+            scores: 成绩数组
+            student_name: 学生姓名（用于迁移学习）
+            all_students_data: 所有学生数据
             
         Returns:
             预测结果字典
         """
-        # 方法1: 如果数据足够，尝试机器学习
-        if len(scores) >= 8 and sklearn_available:
-            self.train_ml_models(scores, exam_names)
-            if self.training_results and self.best_model:
-                ml_result = self.predict_with_ml(scores)
-                if ml_result and ml_result.get('confidence_score', 0) > 0.4:
-                    self.selected_method = "机器学习"
-                    return ml_result
+        if len(scores) < 2:
+            return {
+                'prediction': float(np.mean(scores)) if len(scores) > 0 else 0,
+                'confidence_interval': 10.0,
+                'confidence_score': 0.3,
+                'method': '数据不足',
+                'pattern': 'insufficient_data',
+                'data_points': len(scores)
+            }
         
-        # 方法2: 如果数据适中，使用加权线性回归
-        if len(scores) >= 4:
-            wr_result = self.predict_with_weighted_regression(scores, exam_names)
-            if wr_result:
-                self.selected_method = "加权线性回归"
-                return wr_result
+        # 1. 分析学生模式
+        pattern_info = self.analyze_student_pattern(scores)
         
-        # 方法3: 回退到简单加权平均
-        sa_result = self.predict_with_simple_average(scores)
-        if sa_result:
-            self.selected_method = "加权平均"
-            return sa_result
+        # 2. 趋势感知预测
+        trend_result = self.trend_aware_prediction(scores, pattern_info)
         
-        # 方法4: 最后回退
+        # 3. 如果数据足够，尝试迁移学习
+        transfer_learning_prediction = None
+        if student_name and all_students_data and len(all_students_data) >= 5:
+            # 寻找相似学生
+            similar_students = self.find_similar_students(
+                scores, all_students_data, n_similar=3
+            )
+            
+            if similar_students:
+                # 迁移学习预测
+                transfer_learning_prediction = self.predict_with_transfer_learning(
+                    scores, similar_students, all_students_data
+                )
+                
+                if transfer_learning_prediction is not None:
+                    # 计算迁移学习的置信度
+                    similarity_scores = [sim for _, sim in similar_students]
+                    avg_similarity = np.mean(similarity_scores)
+                    
+                    # 融合迁移学习和趋势感知预测
+                    transfer_weight = min(0.5, avg_similarity * 0.7)  # 迁移学习权重
+                    trend_weight = 1.0 - transfer_weight
+                    
+                    # 融合预测
+                    final_prediction = (
+                        transfer_weight * transfer_learning_prediction +
+                        trend_weight * trend_result['prediction']
+                    )
+                    
+                    # 更新结果
+                    trend_result['prediction'] = float(final_prediction)
+                    trend_result['method'] = '融合预测(趋势+迁移)'
+                    trend_result['transfer_learning'] = True
+                    trend_result['similar_students_count'] = len(similar_students)
+                    trend_result['avg_similarity'] = float(avg_similarity)
+                    trend_result['transfer_prediction'] = float(transfer_learning_prediction)
+        
+        # 4. 边界检查和合理性约束
+        final_prediction = trend_result['prediction']
+        min_score, max_score = np.min(scores), np.max(scores)
+        
+        # 确保预测在合理范围内
+        if pattern_info.get("pattern_type") in ["strong_upward", "recent_upward"]:
+            # 上升趋势：预测不低于近期平均
+            recent_avg = np.mean(scores[-min(3, len(scores)):])
+            final_prediction = max(final_prediction, recent_avg * 0.95)
+        elif pattern_info.get("pattern_type") in ["strong_downward", "recent_downward"]:
+            # 下降趋势：预测不高于近期平均
+            recent_avg = np.mean(scores[-min(3, len(scores)):])
+            final_prediction = min(final_prediction, recent_avg * 1.05)
+        
+        # 最终边界检查
+        score_range = max_score - min_score
+        lower_bound = min_score - 0.3 * score_range
+        upper_bound = max_score + 0.3 * score_range
+        final_prediction = max(lower_bound, min(upper_bound, final_prediction))
+        
+        trend_result['prediction'] = float(final_prediction)
+        trend_result['pattern_info'] = pattern_info
+        trend_result['data_points'] = len(scores)
+        
+        return trend_result
+
+
+# ============================================
+# 班级智能分析器
+# ============================================
+class ClassIntelligenceAnalyzer:
+    """班级智能分析器，支持聚类和模式分析"""
+    
+    def __init__(self):
+        self.patterns_cache = {}
+        self.clusters_cache = {}
+        
+    def analyze_class_patterns(self, class_data: pd.DataFrame, class_name: str, 
+                              subject: str) -> Dict[str, Any]:
+        """
+        分析班级整体的成绩模式
+        
+        Args:
+            class_data: 班级数据
+            class_name: 班级名称
+            subject: 科目
+            
+        Returns:
+            班级模式分析结果
+        """
+        # 提取所有学生成绩
+        student_scores = {}
+        student_names = class_data[st.session_state.name_column_name].unique()
+        
+        for student in student_names:
+            grades_df = GradeManager.get_student_grades(
+                class_data, class_name, student,
+                st.session_state.class_column_name, st.session_state.name_column_name,
+                st.session_state.subjects, st.session_state.exams,
+                st.session_state.column_mapping
+            )
+            
+            if grades_df is not None and subject in grades_df.columns:
+                scores = pd.to_numeric(grades_df[subject], errors='coerce').dropna().values
+                if len(scores) >= 2:
+                    student_scores[student] = scores
+        
+        if len(student_scores) < 3:
+            return {"error": "数据不足"}
+        
+        # 使用智能预测器分析模式
+        predictor = IntelligentGradePredictor()
+        pattern_distribution = defaultdict(int)
+        
+        for student, scores in student_scores.items():
+            pattern_info = predictor.analyze_student_pattern(scores)
+            pattern_type = pattern_info.get("pattern_type", "unknown")
+            pattern_distribution[pattern_type] += 1
+        
+        # 聚类分析
+        clustering = predictor.cluster_students_by_pattern(student_scores, n_clusters=3)
+        
+        # 分析每个聚类的特征
+        cluster_features = {}
+        for student, cluster_label in clustering.items():
+            if student in student_scores:
+                scores = student_scores[student]
+                if cluster_label not in cluster_features:
+                    cluster_features[cluster_label] = {
+                        'students': [],
+                        'avg_scores': [],
+                        'patterns': []
+                    }
+                
+                pattern_info = predictor.analyze_student_pattern(scores)
+                
+                cluster_features[cluster_label]['students'].append(student)
+                cluster_features[cluster_label]['avg_scores'].append(np.mean(scores))
+                cluster_features[cluster_label]['patterns'].append(pattern_info.get("pattern_type", "unknown"))
+        
+        # 计算每个聚类的统计
+        for cluster_label, features in cluster_features.items():
+            if features['avg_scores']:
+                features['avg_score'] = np.mean(features['avg_scores'])
+                features['size'] = len(features['students'])
+                
+                # 主要模式
+                pattern_counts = {}
+                for pattern in features['patterns']:
+                    pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+                if pattern_counts:
+                    main_pattern = max(pattern_counts.items(), key=lambda x: x[1])[0]
+                    features['main_pattern'] = main_pattern
+        
         return {
-            'prediction': np.mean(scores) if len(scores) > 0 else 0,
-            'confidence_interval': 10.0,
-            'confidence_score': 0.3,
-            'model_name': '简单平均',
-            'model_description': '基于历史平均值的预测',
-            'method': '简单平均'
+            'student_count': len(student_scores),
+            'pattern_distribution': dict(pattern_distribution),
+            'clustering': clustering,
+            'cluster_features': cluster_features,
+            'student_scores': student_scores  # 用于预测
         }
+    
+    def get_similar_students_for_prediction(self, class_patterns: Dict, 
+                                           target_student: str, n_similar: int = 5) -> List[Tuple[str, float]]:
+        """
+        为目标学生获取相似学生
+        
+        Args:
+            class_patterns: 班级模式分析结果
+            target_student: 目标学生
+            n_similar: 返回的相似学生数量
+            
+        Returns:
+            相似学生列表
+        """
+        if 'student_scores' not in class_patterns or target_student not in class_patterns['student_scores']:
+            return []
+        
+        target_scores = class_patterns['student_scores'][target_student]
+        all_scores = class_patterns['student_scores']
+        
+        # 移除目标学生
+        other_scores = {k: v for k, v in all_scores.items() if k != target_student}
+        
+        if not other_scores:
+            return []
+        
+        # 使用智能预测器寻找相似学生
+        predictor = IntelligentGradePredictor()
+        similar_students = predictor.find_similar_students(
+            target_scores, other_scores, n_similar
+        )
+        
+        return similar_students
 
 
 # ============================================
-# 批量预测功能
-# 批量预测功能 - 修复版
-# 修复了下载后结果消失的问题
+# 智能批量预测（优化版）
 # ============================================
-def batch_grade_prediction():
+def intelligent_batch_prediction():
     """
-    批量成绩预测功能
-    支持选择学生批量预测和全班批量预测
+    智能批量预测 - 结合聚类和迁移学习
     """
-    st.markdown("#### 📊 批量成绩预测")
-    st.markdown("一次预测多个学生或整个班级的下次考试成绩")
+    st.markdown("#### 🧠 智能批量成绩预测")
+    st.markdown("结合趋势感知、聚类分析和迁移学习的智能预测系统")
     
     # 选择班级
     classes = sorted(st.session_state.df[st.session_state.class_column_name].dropna().astype(str).str.strip().unique())
@@ -2608,35 +2894,28 @@ def batch_grade_prediction():
     selected_class = st.selectbox(
         "选择班级",
         classes,
-        key="batch_prediction_class_select"
+        key="intelligent_batch_class_select"
     )
     
     if not selected_class:
         return
     
     # 获取班级学生列表
-    class_students = st.session_state.df[
+    class_data = st.session_state.df[
         st.session_state.df[st.session_state.class_column_name].astype(str).str.strip() == selected_class
-    ][st.session_state.name_column_name].dropna().unique()
+    ]
+    class_students = class_data[st.session_state.name_column_name].dropna().unique()
     
     if len(class_students) == 0:
         st.warning("该班级没有学生数据")
         return
     
-    # 选择预测模式
-    prediction_mode = st.radio(
-        "选择预测模式",
-        ["选择学生批量预测", "全班批量预测"],
-        key="batch_prediction_mode"
-    )
-    
     # 选择要预测的科目
-    # 先获取一个学生的成绩数据来确定科目
     sample_student = class_students[0]
     sample_grades_df = GradeManager.get_student_grades(
-        st.session_state.df, selected_class, sample_student,
+        class_data, selected_class, sample_student,
         st.session_state.class_column_name, st.session_state.name_column_name,
-        st.session_state.subjects, st.session_state.exams, 
+        st.session_state.subjects, st.session_state.exams,
         st.session_state.column_mapping
     )
     
@@ -2653,157 +2932,288 @@ def batch_grade_prediction():
     selected_subject = st.selectbox(
         "选择要预测的科目",
         score_subjects,
-        key="batch_prediction_subject"
+        key="intelligent_batch_subject"
     )
     
-    # 选择学生（如果是选择学生模式）
+    # 选择预测模式
+    st.markdown("#### 🎯 预测模式设置")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        use_transfer_learning = st.checkbox(
+            "使用迁移学习", 
+            value=True,
+            help="使用相似学生的成绩模式进行预测，可提高准确性"
+        )
+        
+        use_clustering = st.checkbox(
+            "使用聚类分析", 
+            value=True,
+            help="将学生按成绩模式聚类，提供更精准的预测"
+        )
+    
+    with col2:
+        min_data_points = st.slider(
+            "最小数据点要求", 
+            min_value=2, max_value=6, value=3,
+            help="进行预测所需的最少考试次数"
+        )
+        
+        confidence_threshold = st.slider(
+            "置信度阈值", 
+            min_value=0.3, max_value=0.9, value=0.6, step=0.1,
+            help="只显示置信度高于此值的预测"
+        )
+    
+    # 选择学生
+    st.markdown("#### 👥 选择学生")
+    prediction_mode = st.radio(
+        "预测范围",
+        ["选择学生", "全班预测", "按聚类选择"],
+        key="intelligent_prediction_mode"
+    )
+    
     selected_students = []
-    if prediction_mode == "选择学生批量预测":
+    
+    if prediction_mode == "选择学生":
         selected_students = st.multiselect(
             "选择要预测的学生（可多选）",
             sorted(class_students),
             default=sorted(class_students)[:min(5, len(class_students))],
-            key="batch_selected_students"
+            key="intelligent_selected_students"
         )
-    else:  # 全班批量预测
+        
+    elif prediction_mode == "全班预测":
         selected_students = sorted(class_students)
         st.info(f"将预测全班 {len(selected_students)} 名学生")
+        
+    elif prediction_mode == "按聚类选择":
+        # 先进行聚类分析
+        with st.spinner("正在进行班级聚类分析..."):
+            analyzer = ClassIntelligenceAnalyzer()
+            class_patterns = analyzer.analyze_class_patterns(
+                class_data, selected_class, selected_subject
+            )
+        
+        if 'error' in class_patterns:
+            st.warning(f"聚类分析失败: {class_patterns['error']}")
+            selected_students = sorted(class_students)
+        else:
+            # 显示聚类结果
+            st.markdown("##### 📊 班级聚类分析结果")
+            
+            cluster_features = class_patterns.get('cluster_features', {})
+            
+            cols = st.columns(min(3, len(cluster_features)))
+            
+            for idx, (cluster_id, features) in enumerate(cluster_features.items()):
+                with cols[idx % len(cols)]:
+                    with st.expander(f"聚类 {cluster_id+1} ({features.get('size', 0)}人)"):
+                        st.metric("平均成绩", f"{features.get('avg_score', 0):.1f}")
+                        st.metric("主要模式", features.get('main_pattern', '未知'))
+                        st.metric("学生数", features.get('size', 0))
+            
+            # 选择聚类
+            available_clusters = list(cluster_features.keys())
+            selected_cluster = st.selectbox(
+                "选择要预测的聚类",
+                available_clusters,
+                format_func=lambda x: f"聚类 {x+1} ({cluster_features[x].get('size', 0)}人)",
+                key="cluster_selection"
+            )
+            
+            if selected_cluster in cluster_features:
+                cluster_students = cluster_features[selected_cluster].get('students', [])
+                selected_students = st.multiselect(
+                    f"选择聚类 {selected_cluster+1} 中的学生",
+                    sorted(cluster_students),
+                    default=sorted(cluster_students)[:min(10, len(cluster_students))],
+                    key="cluster_students_selection"
+                )
+                
+                # 缓存聚类结果用于预测
+                st.session_state['class_patterns'] = class_patterns
     
     if not selected_students:
         st.warning("请选择至少一名学生")
         return
     
-    # 检查是否有缓存的预测结果
-    cache_key = f"batch_prediction_{selected_class}_{selected_subject}"
-    has_cached_results = False
-    cached_results = None
-    
-    if cache_key in st.session_state:
-        cached_data = st.session_state[cache_key]
-        # 检查缓存是否与当前选择匹配
-        if (cached_data.get('class') == selected_class and 
-            cached_data.get('subject') == selected_subject and
-            cached_data.get('students') == list(selected_students)):
-            has_cached_results = True
-            cached_results = cached_data.get('results')
-            st.info("📁 检测到缓存的预测结果，可以直接查看和下载")
-    
     # 开始预测按钮
-    if st.button("🚀 开始批量预测", key="start_batch_prediction"):
+    if st.button("🚀 开始智能预测", type="primary", key="start_intelligent_prediction"):
         if not selected_subject:
             st.warning("请选择要预测的科目")
             return
         
-        st.markdown(f"### 📈 批量预测结果 - {selected_class} - {selected_subject}")
-        
-        # 存储预测结果
-        prediction_results = []
-        valid_predictions = 0
-        total_students = len(selected_students)
+        st.markdown(f"### 🧠 智能预测结果 - {selected_class} - {selected_subject}")
         
         # 进度条
         progress_bar = st.progress(0)
         status_text = st.empty()
         
+        # 收集所有学生成绩数据（用于迁移学习）
+        all_students_scores = {}
+        student_patterns = {}
+        
+        with st.spinner("收集班级成绩数据..."):
+            for student in class_students:
+                grades_df = GradeManager.get_student_grades(
+                    class_data, selected_class, student,
+                    st.session_state.class_column_name, st.session_state.name_column_name,
+                    st.session_state.subjects, st.session_state.exams,
+                    st.session_state.column_mapping
+                )
+                
+                if grades_df is not None and selected_subject in grades_df.columns:
+                    scores = pd.to_numeric(grades_df[selected_subject], errors='coerce').dropna().values
+                    if len(scores) >= 2:
+                        all_students_scores[student] = scores
+        
+        # 如果需要，进行聚类分析
+        if use_clustering and 'class_patterns' in st.session_state:
+            class_patterns = st.session_state['class_patterns']
+        elif use_clustering:
+            with st.spinner("进行聚类分析..."):
+                analyzer = ClassIntelligenceAnalyzer()
+                class_patterns = analyzer.analyze_class_patterns(
+                    class_data, selected_class, selected_subject
+                )
+            st.session_state['class_patterns'] = class_patterns
+        else:
+            class_patterns = {}
+        
+        # 进行预测
+        prediction_results = []
+        valid_predictions = 0
+        high_confidence_predictions = 0
+        
         for idx, student_name in enumerate(selected_students):
             # 更新进度
-            progress = (idx + 1) / total_students
+            progress = (idx + 1) / len(selected_students)
             progress_bar.progress(progress)
-            status_text.text(f"正在预测: {student_name} ({idx+1}/{total_students})")
+            status_text.text(f"智能预测中: {student_name} ({idx+1}/{len(selected_students)})")
             
             try:
                 # 获取学生成绩
                 grades_df = GradeManager.get_student_grades(
-                    st.session_state.df, selected_class, student_name,
+                    class_data, selected_class, student_name,
                     st.session_state.class_column_name, st.session_state.name_column_name,
-                    st.session_state.subjects, st.session_state.exams, 
+                    st.session_state.subjects, st.session_state.exams,
                     st.session_state.column_mapping
                 )
                 
-                if grades_df is not None and not grades_df.empty and selected_subject in grades_df.columns:
-                    # 提取成绩数据
-                    subject_data = pd.to_numeric(grades_df[selected_subject], errors='coerce')
-                    valid_mask = subject_data.notna()
-                    valid_data = subject_data[valid_mask]
-                    exam_names = grades_df.loc[valid_mask, '考试场次'].tolist()
+                if grades_df is not None and selected_subject in grades_df.columns:
+                    scores = pd.to_numeric(grades_df[selected_subject], errors='coerce').dropna().values
                     
-                    if len(valid_data) >= 3:  # 至少需要3个数据点
+                    if len(scores) >= min_data_points:
                         # 使用智能预测器
-                        predictor = SmartGradePredictor(window_size=3, test_size=0.2)
-                        prediction_result = predictor.smart_predict(valid_data.values, exam_names)
+                        predictor = IntelligentGradePredictor(all_students_scores)
                         
-                        if prediction_result:
-                            # 计算当前成绩
-                            current_grade = valid_data.values[-1] if len(valid_data) > 0 else 0
+                        # 准备迁移学习数据
+                        transfer_data = all_students_scores if use_transfer_learning else None
+                        
+                        # 进行预测
+                        prediction_result = predictor.smart_predict(
+                            scores, student_name, transfer_data
+                        )
+                        
+                        if prediction_result and 'prediction' in prediction_result:
+                            # 获取当前成绩
+                            current_grade = scores[-1] if len(scores) > 0 else 0
                             prediction_value = prediction_result['prediction']
                             confidence_score = prediction_result.get('confidence_score', 0)
-                            confidence_interval = prediction_result.get('confidence_interval', 0)
-                            method = prediction_result.get('method', '未知')
+                            pattern_type = prediction_result.get('pattern', 'unknown')
                             
                             # 计算变化
                             improvement = prediction_value - current_grade
-                            trend = "上升" if improvement > 0 else "下降"
                             
-                            # 确定趋势级别
-                            if abs(improvement) > 5:
-                                trend_level = "显著" + trend
-                            elif abs(improvement) > 2:
-                                trend_level = "轻微" + trend
+                            # 确定趋势
+                            if improvement > 1.0:
+                                trend = "上升"
+                                trend_level = "显著上升" if improvement > 5.0 else "轻微上升"
+                            elif improvement < -1.0:
+                                trend = "下降"
+                                trend_level = "显著下降" if improvement < -5.0 else "轻微下降"
                             else:
+                                trend = "稳定"
                                 trend_level = "基本持平"
                             
+                            # 模式描述
+                            pattern_map = {
+                                "strong_upward": "强上升趋势",
+                                "recent_upward": "近期上升",
+                                "strong_downward": "强下降趋势",
+                                "recent_downward": "近期下降",
+                                "stable": "稳定",
+                                "stable_low_volatility": "低波动稳定",
+                                "volatile": "高波动",
+                                "changed_at": "模式转变"
+                            }
+                            pattern_desc = pattern_map.get(pattern_type, pattern_type)
+                            
                             # 置信度级别
-                            if confidence_score > 0.7:
+                            if confidence_score >= 0.7:
                                 confidence_level = "高"
-                            elif confidence_score > 0.5:
+                            elif confidence_score >= 0.5:
                                 confidence_level = "中"
                             else:
                                 confidence_level = "低"
                             
-                            prediction_results.append({
+                            result = {
                                 '序号': idx + 1,
                                 '姓名': student_name,
                                 '当前成绩': round(current_grade, 1),
                                 '预测成绩': round(prediction_value, 1),
                                 '预测变化': round(improvement, 1),
                                 '变化趋势': trend_level,
-                                '预测方法': method,
+                                '成绩模式': pattern_desc,
+                                '预测方法': prediction_result.get('method', '智能预测'),
                                 '置信度': f"{confidence_score:.1%}",
                                 '置信度级别': confidence_level,
-                                '置信区间': f"±{confidence_interval:.1f}",
-                                '有效考试次数': len(valid_data),
-                                '数据充足度': "充足" if len(valid_data) >= 8 else "中等" if len(valid_data) >= 5 else "较少"
-                            })
+                                '有效考试次数': len(scores),
+                                '数据充足度': "充足" if len(scores) >= 5 else "中等" if len(scores) >= 3 else "较少"
+                            }
                             
+                            # 添加迁移学习信息
+                            if prediction_result.get('transfer_learning', False):
+                                result['预测方法'] = '融合预测'
+                                result['相似学生数'] = prediction_result.get('similar_students_count', 0)
+                                result['平均相似度'] = f"{prediction_result.get('avg_similarity', 0):.1%}"
+                            
+                            prediction_results.append(result)
+                            
+                            if confidence_score >= confidence_threshold:
+                                high_confidence_predictions += 1
                             valid_predictions += 1
+                            
                         else:
                             prediction_results.append({
                                 '序号': idx + 1,
                                 '姓名': student_name,
-                                '当前成绩': "N/A",
+                                '当前成绩': round(scores[-1], 1) if len(scores) > 0 else "N/A",
                                 '预测成绩': "N/A",
                                 '预测变化': "N/A",
                                 '变化趋势': "预测失败",
+                                '成绩模式': "N/A",
                                 '预测方法': "N/A",
                                 '置信度': "N/A",
                                 '置信度级别': "N/A",
-                                '置信区间': "N/A",
-                                '有效考试次数': len(valid_data),
-                                '数据充足度': "不足" if len(valid_data) < 3 else "较少"
+                                '有效考试次数': len(scores),
+                                '数据充足度': "不足" if len(scores) < min_data_points else "较少"
                             })
                     else:
                         prediction_results.append({
                             '序号': idx + 1,
                             '姓名': student_name,
-                            '当前成绩': "N/A",
+                            '当前成绩': round(scores[-1], 1) if len(scores) > 0 else "N/A",
                             '预测成绩': "N/A",
                             '预测变化': "N/A",
                             '变化趋势': "数据不足",
+                            '成绩模式': "N/A",
                             '预测方法': "N/A",
                             '置信度': "N/A",
                             '置信度级别': "N/A",
-                            '置信区间': "N/A",
-                            '有效考试次数': len(valid_data),
+                            '有效考试次数': len(scores),
                             '数据充足度': "不足"
                         })
                 else:
@@ -2814,10 +3224,10 @@ def batch_grade_prediction():
                         '预测成绩': "N/A",
                         '预测变化': "N/A",
                         '变化趋势': "无成绩数据",
+                        '成绩模式': "N/A",
                         '预测方法': "N/A",
                         '置信度': "N/A",
                         '置信度级别': "N/A",
-                        '置信区间': "N/A",
                         '有效考试次数': 0,
                         '数据充足度': "无数据"
                     })
@@ -2830,10 +3240,10 @@ def batch_grade_prediction():
                     '预测成绩': "N/A",
                     '预测变化': "N/A",
                     '变化趋势': f"错误: {str(e)[:30]}...",
+                    '成绩模式': "N/A",
                     '预测方法': "N/A",
                     '置信度': "N/A",
                     '置信度级别': "N/A",
-                    '置信区间': "N/A",
                     '有效考试次数': 0,
                     '数据充足度': "错误"
                 })
@@ -2842,194 +3252,165 @@ def batch_grade_prediction():
         progress_bar.empty()
         status_text.empty()
         
-        # 将结果转换为DataFrame
-        results_df = pd.DataFrame(prediction_results)
-        
-        # 缓存结果到session_state
-        st.session_state[cache_key] = {
-            'class': selected_class,
-            'subject': selected_subject,
-            'students': list(selected_students),
-            'results': prediction_results,
-            'results_df': results_df,
-            'valid_predictions': valid_predictions,
-            'total_students': total_students,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
         # 显示预测结果
-        display_prediction_results(results_df, valid_predictions, total_students, selected_class, selected_subject)
-        
-    # 如果有缓存的预测结果，直接显示
-    elif has_cached_results and cached_results is not None:
-        st.markdown(f"### 📈 缓存的预测结果 - {selected_class} - {selected_subject}")
-        
-        # 从缓存中获取数据
-        cached_data = st.session_state[cache_key]
-        results_df = cached_data['results_df']
-        valid_predictions = cached_data['valid_predictions']
-        total_students = cached_data['total_students']
-        
-        # 显示缓存信息
-        timestamp = cached_data.get('timestamp', '未知时间')
-        st.info(f"📁 显示的预测结果来自缓存（生成时间: {timestamp}）")
-        st.info("如需重新预测，请点击上方的'开始批量预测'按钮")
-        
-        # 显示预测结果
-        display_prediction_results(results_df, valid_predictions, total_students, selected_class, selected_subject)
+        display_intelligent_results(
+            prediction_results, valid_predictions, high_confidence_predictions,
+            len(selected_students), selected_class, selected_subject,
+            confidence_threshold
+        )
 
 
-def display_prediction_results(results_df, valid_predictions, total_students, selected_class, selected_subject):
-    """
-    显示预测结果（通用函数，用于显示新生成或缓存的预测结果）
-    """
-    # 显示预测统计
-    st.markdown("##### 📊 预测统计")
+def display_intelligent_results(results, valid_count, high_confidence_count, total_count,
+                               class_name, subject, confidence_threshold):
+    """显示智能预测结果"""
+    
+    # 转换为DataFrame
+    results_df = pd.DataFrame(results)
+    
+    # 显示统计
+    st.markdown("##### 📊 智能预测统计")
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("预测学生总数", total_students)
+        st.metric("预测学生总数", total_count)
     with col2:
-        st.metric("成功预测数", valid_predictions)
+        st.metric("成功预测数", valid_count)
     with col3:
-        success_rate = (valid_predictions / total_students * 100) if total_students > 0 else 0
+        success_rate = (valid_count / total_count * 100) if total_count > 0 else 0
         st.metric("预测成功率", f"{success_rate:.1f}%")
     with col4:
-        if valid_predictions > 0:
-            # 从results_df中计算平均置信度
-            confidence_values = []
-            for _, row in results_df.iterrows():
-                if row['置信度'] != 'N/A':
-                    try:
-                        # 移除百分号并转换为小数
-                        confidence = float(row['置信度'].strip('%')) / 100
-                        confidence_values.append(confidence)
-                    except:
-                        pass
-            
-            if confidence_values:
-                avg_confidence = np.mean(confidence_values)
-                st.metric("平均置信度", f"{avg_confidence:.1%}")
-            else:
-                st.metric("平均置信度", "0%")
-        else:
-            st.metric("平均置信度", "0%")
+        high_conf_rate = (high_confidence_count / valid_count * 100) if valid_count > 0 else 0
+        st.metric(f"高置信度(≥{confidence_threshold:.0%})", f"{high_conf_rate:.1f}%")
     
     # 显示详细结果
     st.markdown("##### 📋 详细预测结果")
-    st.dataframe(results_df, use_container_width=True, height=400)
     
-    # 分析整体趋势
-    if valid_predictions > 0:
-        # 提取有效预测
-        valid_results = []
-        for _, row in results_df.iterrows():
-            if row['预测成绩'] != 'N/A' and not isinstance(row['预测成绩'], str):
-                valid_results.append(row)
+    # 添加筛选选项
+    col1, col2 = st.columns(2)
+    with col1:
+        show_all = st.checkbox("显示所有预测", value=True, key="show_all_predictions")
+    
+    with col2:
+        if not show_all:
+            min_confidence = st.slider("最小置信度", 0.0, 1.0, 0.6, 0.05, key="min_confidence_filter")
+    
+    # 筛选结果
+    if show_all:
+        filtered_results = results_df
+    else:
+        # 过滤低置信度预测
+        def get_confidence(conf_str):
+            try:
+                return float(conf_str.strip('%')) / 100
+            except:
+                return 0.0
+        
+        filtered_results = results_df[
+            results_df['置信度'].apply(
+                lambda x: get_confidence(x) >= min_confidence if isinstance(x, str) and x != 'N/A' else False
+            )
+        ]
+    
+    st.dataframe(filtered_results, use_container_width=True, height=400)
+    
+    # 模式分析
+    if valid_count > 0:
+        st.markdown("##### 📈 成绩模式分析")
+        
+        # 提取有效结果
+        valid_results = [r for r in results if isinstance(r.get('预测成绩'), (int, float))]
         
         if valid_results:
-            # 趋势分析
+            # 模式分布
+            pattern_counts = {}
+            for result in valid_results:
+                pattern = result.get('成绩模式', '未知')
+                pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+            
+            # 趋势分布
             trend_counts = {}
             for result in valid_results:
-                trend = result['变化趋势']
+                trend = result.get('变化趋势', '未知')
                 trend_counts[trend] = trend_counts.get(trend, 0) + 1
-            
-            # 置信度分析
-            confidence_counts = {'高': 0, '中': 0, '低': 0}
-            for result in valid_results:
-                confidence_level = result.get('置信度级别', '低')
-                if confidence_level in confidence_counts:
-                    confidence_counts[confidence_level] += 1
-            
-            st.markdown("##### 📈 整体趋势分析")
             
             col1, col2 = st.columns(2)
             
             with col1:
-                # 趋势分布饼图
+                if pattern_counts:
+                    fig_pattern = go.Figure(data=[go.Pie(
+                        labels=list(pattern_counts.keys()),
+                        values=list(pattern_counts.values()),
+                        hole=.3,
+                        textinfo='label+percent',
+                        marker=dict(colors=px.colors.qualitative.Set3)
+                    )])
+                    fig_pattern.update_layout(
+                        title="学生成绩模式分布",
+                        height=300,
+                        showlegend=True
+                    )
+                    st.plotly_chart(fig_pattern, use_container_width=True)
+            
+            with col2:
                 if trend_counts:
                     fig_trend = go.Figure(data=[go.Pie(
                         labels=list(trend_counts.keys()),
                         values=list(trend_counts.values()),
                         hole=.3,
                         textinfo='label+percent',
-                        marker=dict(colors=px.colors.qualitative.Set3)
+                        marker=dict(colors=['green', 'orange', 'red', 'blue'])
                     )])
-                    
                     fig_trend.update_layout(
-                        title="成绩变化趋势分布",
+                        title="预测变化趋势分布",
                         height=300,
                         showlegend=True
                     )
-                    
                     st.plotly_chart(fig_trend, use_container_width=True)
-            
-            with col2:
-                # 置信度分布饼图
-                if confidence_counts:
-                    fig_conf = go.Figure(data=[go.Pie(
-                        labels=list(confidence_counts.keys()),
-                        values=list(confidence_counts.values()),
-                        hole=.3,
-                        textinfo='label+percent',
-                        marker=dict(colors=['green', 'orange', 'red'])
-                    )])
-                    
-                    fig_conf.update_layout(
-                        title="预测置信度分布",
-                        height=300,
-                        showlegend=True
-                    )
-                    
-                    st.plotly_chart(fig_conf, use_container_width=True)
             
             # 预测成绩分布
             st.markdown("##### 📊 预测成绩分布")
             
-            try:
-                prediction_scores = [r['预测成绩'] for r in valid_results if isinstance(r['预测成绩'], (int, float))]
-                if prediction_scores:
-                    fig_dist = go.Figure()
-                    fig_dist.add_trace(go.Histogram(
-                        x=prediction_scores,
-                        nbinsx=20,
-                        name='预测成绩分布',
-                        marker_color='skyblue',
-                        opacity=0.7
-                    ))
-                    
-                    # 添加平均线
-                    avg_score = np.mean(prediction_scores)
-                    fig_dist.add_vline(
-                        x=avg_score, 
-                        line_dash="dash", 
-                        line_color="red",
-                        annotation_text=f"平均: {avg_score:.1f}",
-                        annotation_position="top right"
-                    )
-                    
-                    fig_dist.update_layout(
-                        title="预测成绩分布直方图",
-                        xaxis_title="预测成绩",
-                        yaxis_title="学生人数",
-                        height=300,
-                        showlegend=False
-                    )
-                    
-                    st.plotly_chart(fig_dist, use_container_width=True)
-                    
-                    # 显示统计信息
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("平均预测成绩", f"{avg_score:.1f}")
-                    with col2:
-                        st.metric("最高预测成绩", f"{max(prediction_scores):.1f}")
-                    with col3:
-                        st.metric("最低预测成绩", f"{min(prediction_scores):.1f}")
-                    with col4:
-                        st.metric("成绩标准差", f"{np.std(prediction_scores):.1f}")
-            except:
-                pass
+            prediction_scores = [r['预测成绩'] for r in valid_results]
+            
+            fig_dist = go.Figure()
+            fig_dist.add_trace(go.Histogram(
+                x=prediction_scores,
+                nbinsx=20,
+                name='预测成绩分布',
+                marker_color='skyblue',
+                opacity=0.7
+            ))
+            
+            # 添加统计线
+            avg_score = np.mean(prediction_scores)
+            fig_dist.add_vline(
+                x=avg_score, 
+                line_dash="dash", 
+                line_color="red",
+                annotation_text=f"平均: {avg_score:.1f}",
+                annotation_position="top right"
+            )
+            
+            fig_dist.update_layout(
+                title="预测成绩分布直方图",
+                xaxis_title="预测成绩",
+                yaxis_title="学生人数",
+                height=300,
+                showlegend=False
+            )
+            
+            st.plotly_chart(fig_dist, use_container_width=True)
+            
+            # 显示统计信息
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("平均预测成绩", f"{avg_score:.1f}")
+            with col2:
+                st.metric("最高预测成绩", f"{max(prediction_scores):.1f}")
+            with col3:
+                st.metric("最低预测成绩", f"{min(prediction_scores):.1f}")
+            with col4:
+                st.metric("成绩标准差", f"{np.std(prediction_scores):.1f}")
     
     # 数据下载
     st.markdown("##### 💾 下载预测结果")
@@ -3042,139 +3423,171 @@ def display_prediction_results(results_df, valid_predictions, total_students, se
         st.download_button(
             label="📥 下载预测结果(CSV)",
             data=csv,
-            file_name=f"{selected_class}_{selected_subject}_批量预测_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            file_name=f"{class_name}_{subject}_智能预测_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            key="batch_prediction_csv"
+            key="intelligent_prediction_csv"
         )
     
     with col2:
-        # 生成摘要报告
-        report_text = generate_prediction_report(results_df, valid_predictions, total_students, selected_class, selected_subject)
+        # 生成智能报告
+        report_text = generate_intelligent_report(results_df, valid_count, high_confidence_count, 
+                                                total_count, class_name, subject, confidence_threshold)
         
         st.download_button(
-            label="📝 下载预测报告(TXT)",
+            label="📝 下载智能报告(TXT)",
             data=report_text,
-            file_name=f"{selected_class}_{selected_subject}_预测报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            file_name=f"{class_name}_{subject}_智能报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
             mime="text/plain",
-            key="batch_prediction_txt"
+            key="intelligent_prediction_txt"
         )
     
-    # 预测建议
-    st.markdown("##### 💡 教学建议")
+    # 教学建议
+    st.markdown("##### 💡 智能教学建议")
     
-    if valid_predictions == 0:
-        st.warning("⚠️ 没有成功预测任何学生，可能因为数据不足或格式问题")
+    if valid_count == 0:
+        st.warning("⚠️ 没有成功预测任何学生，可能因为数据不足")
         st.info("""
         **建议**：
         1. 检查学生成绩数据是否完整
-        2. 确保每个学生至少有3次有效成绩
-        3. 检查数据格式是否正确
-        """)
-    elif valid_predictions < total_students:
-        st.warning(f"⚠️ 部分学生预测失败 ({valid_predictions}/{total_students})")
-        st.info("""
-        **可能原因**：
-        1. 部分学生数据不足
-        2. 成绩记录缺失
-        3. 数据格式问题
-        
-        **建议**：
-        1. 检查失败学生的成绩记录
-        2. 补充缺失的成绩数据
-        3. 重新运行预测
+        2. 降低最小数据点要求
+        3. 确保数据格式正确
         """)
     else:
-        st.success("✅ 所有学生预测完成")
-        st.info("""
-        **教学建议**：
-        1. 关注预测成绩下降的学生，及时提供帮助
-        2. 对预测成绩上升的学生给予鼓励
-        3. 根据整体趋势调整教学计划
-        4. 结合其他分析结果综合评估
-        """)
+        # 分析模式给出建议
+        valid_results = [r for r in results if isinstance(r.get('预测成绩'), (int, float))]
+        
+        if valid_results:
+            # 统计不同模式
+            strong_upward = sum(1 for r in valid_results if r.get('成绩模式') == '强上升趋势')
+            recent_upward = sum(1 for r in valid_results if r.get('成绩模式') == '近期上升')
+            strong_downward = sum(1 for r in valid_results if r.get('成绩模式') == '强下降趋势')
+            recent_downward = sum(1 for r in valid_results if r.get('成绩模式') == '近期下降')
+            
+            st.success(f"✅ 成功预测 {valid_count} 名学生")
+            
+            if strong_downward + recent_downward > 0:
+                st.warning(f"⚠️ 发现 {strong_downward + recent_downward} 名学生有下降趋势，需要重点关注")
+                
+            if strong_upward + recent_upward > 0:
+                st.info(f"📈 {strong_upward + recent_upward} 名学生呈现上升趋势，可给予鼓励")
+            
+            st.info("""
+            **智能教学建议**：
+            1. 关注下降趋势学生，提供个性化辅导
+            2. 对上升趋势学生给予正向强化
+            3. 对稳定型学生保持现有教学节奏
+            4. 对波动型学生分析原因，提供稳定性训练
+            5. 利用聚类分析结果进行分组教学
+            """)
 
 
-def generate_prediction_report(results_df, valid_predictions, total_students, selected_class, selected_subject):
-    """生成预测报告文本"""
-    # 计算成功预测的学生
-    success_rate = (valid_predictions / total_students * 100) if total_students > 0 else 0
+def generate_intelligent_report(results_df, valid_count, high_confidence_count, total_count,
+                               class_name, subject, confidence_threshold):
+    """生成智能预测报告"""
     
-    # 计算方法统计
+    # 计算统计
+    success_rate = (valid_count / total_count * 100) if total_count > 0 else 0
+    high_conf_rate = (high_confidence_count / valid_count * 100) if valid_count > 0 else 0
+    
+    # 分析方法统计
     method_counts = {}
+    pattern_counts = {}
+    trend_counts = {}
+    
     for _, row in results_df.iterrows():
         if row['预测方法'] != 'N/A':
             method = row['预测方法']
             method_counts[method] = method_counts.get(method, 0) + 1
-    
-    # 计算趋势统计
-    trend_counts = {}
-    for _, row in results_df.iterrows():
+        
+        if row['成绩模式'] != 'N/A':
+            pattern = row['成绩模式']
+            pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+        
         if row['变化趋势'] not in ['N/A', '数据不足', '无成绩数据', '预测失败']:
             trend = row['变化趋势']
             trend_counts[trend] = trend_counts.get(trend, 0) + 1
     
-    # 计算平均预测成绩
-    prediction_scores = []
-    for _, row in results_df.iterrows():
-        if row['预测成绩'] != 'N/A' and not isinstance(row['预测成绩'], str):
-            prediction_scores.append(row['预测成绩'])
-    
     # 生成报告
     report_text = f"""
-========== 批量成绩预测报告 ==========
+========== 智能成绩预测报告 ==========
 
-班级：{selected_class}
-科目：{selected_subject}
+班级：{class_name}
+科目：{subject}
 报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-预测学生总数：{total_students}
-成功预测数：{valid_predictions}
+预测方法：趋势感知 + 迁移学习 + 聚类分析
+置信度阈值：{confidence_threshold:.0%}
+
+【预测统计】
+预测学生总数：{total_count}
+成功预测数：{valid_count}
 预测成功率：{success_rate:.1f}%
+高置信度预测数：{high_confidence_count}
+高置信度比例：{high_conf_rate:.1f}%
 
 【预测方法统计】
 """
     
     for method, count in method_counts.items():
-        percentage = (count / total_students * 100) if total_students > 0 else 0
+        percentage = (count / total_count * 100) if total_count > 0 else 0
         report_text += f"  {method}: {count}人 ({percentage:.1f}%)\n"
     
     report_text += f"""
-【成绩变化趋势统计】
+【成绩模式统计】
+"""
+    
+    for pattern, count in pattern_counts.items():
+        percentage = (count / total_count * 100) if total_count > 0 else 0
+        report_text += f"  {pattern}: {count}人 ({percentage:.1f}%)\n"
+    
+    report_text += f"""
+【变化趋势统计】
 """
     
     for trend, count in trend_counts.items():
-        percentage = (count / total_students * 100) if total_students > 0 else 0
+        percentage = (count / total_count * 100) if total_count > 0 else 0
         report_text += f"  {trend}: {count}人 ({percentage:.1f}%)\n"
     
     report_text += f"""
-【预测成绩统计】
+【教学建议】
 """
     
-    if prediction_scores:
-        report_text += f"  平均预测成绩: {np.mean(prediction_scores):.1f}\n"
-        report_text += f"  最高预测成绩: {max(prediction_scores):.1f}\n"
-        report_text += f"  最低预测成绩: {min(prediction_scores):.1f}\n"
-        report_text += f"  成绩标准差: {np.std(prediction_scores):.1f}\n"
-    else:
-        report_text += "  无有效的预测成绩数据\n"
+    # 基于模式给出建议
+    if '强下降趋势' in pattern_counts or '近期下降' in pattern_counts:
+        down_count = pattern_counts.get('强下降趋势', 0) + pattern_counts.get('近期下降', 0)
+        report_text += f"1. 重点关注 {down_count} 名成绩下降学生，提供个性化辅导\n"
     
-    report_text += """
+    if '强上升趋势' in pattern_counts or '近期上升' in pattern_counts:
+        up_count = pattern_counts.get('强上升趋势', 0) + pattern_counts.get('近期上升', 0)
+        report_text += f"2. 鼓励 {up_count} 名成绩上升学生，保持学习动力\n"
+    
+    if '稳定' in pattern_counts or '低波动稳定' in pattern_counts:
+        stable_count = pattern_counts.get('稳定', 0) + pattern_counts.get('低波动稳定', 0)
+        report_text += f"3. {stable_count} 名学生成绩稳定，维持现有教学节奏\n"
+    
+    if '高波动' in pattern_counts:
+        volatile_count = pattern_counts.get('高波动', 0)
+        report_text += f"4. {volatile_count} 名学生成绩波动大，需分析原因并提供稳定性训练\n"
+    
+    report_text += f"""
 【学生详细预测结果】
-序号,姓名,当前成绩,预测成绩,预测变化,变化趋势,预测方法,置信度,置信区间,有效考试次数,数据充足度
+序号,姓名,当前成绩,预测成绩,预测变化,变化趋势,成绩模式,预测方法,置信度,有效考试次数,数据充足度
 """
     
     # 添加每个学生的详细结果
     for _, row in results_df.iterrows():
         report_text += f"{row['序号']},{row['姓名']},{row['当前成绩']},{row['预测成绩']},"
-        report_text += f"{row['预测变化']},{row['变化趋势']},{row['预测方法']},"
-        report_text += f"{row['置信度']},{row['置信区间']},{row['有效考试次数']},{row['数据充足度']}\n"
+        report_text += f"{row['预测变化']},{row['变化趋势']},{row['成绩模式']},"
+        report_text += f"{row['预测方法']},{row['置信度']},{row['有效考试次数']},{row['数据充足度']}\n"
     
+
     report_text += """
-【备注与建议】
-1. 本报告基于历史成绩数据生成，仅供参考
-2. 预测置信度表示预测结果的可靠性
-3. 数据不足可能导致预测不准确
-4. 建议结合学生实际情况进行教学决策
-5. 定期更新成绩数据可提高预测准确性
+
+【智能预测说明】
+1. 趋势感知预测：分析学生历史成绩模式，识别上升/下降趋势
+2. 迁移学习：参考相似学生的成绩变化模式进行预测
+3. 聚类分析：将学生按成绩模式分组，提供更精准的预测
+4. 置信度计算：综合考虑数据量、模式稳定性和相似度
+5. 边界检查：确保预测成绩在合理范围内
 
 ======================================
 """
@@ -3182,13 +3595,12 @@ def generate_prediction_report(results_df, valid_predictions, total_students, se
     return report_text
 
 
-
 # ============================================
-# 模块4: 学生成绩分析、预测（增强版）主函数
-# 包含智能预测选择和批量预测功能
+# 模块4: 学生成绩分析、预测（智能版）主函数
+# 结合趋势感知、迁移学习和聚类分析
 # ============================================
 def module_student_analysis():
-    """模块4: 学生成绩分析、预测（增强版）"""
+    """模块4: 学生成绩分析、预测（智能版）"""
     st.markdown("## 📈 4. 学生成绩分析、预测")
     
     if not st.session_state.data_loaded:
@@ -3196,26 +3608,26 @@ def module_student_analysis():
         return
     
     st.markdown("""
-    **增强版功能特色**：
-    1. **成绩趋势分析**：智能考试权重计算 + 加权线性回归趋势分析
-    2. **智能成绩预测**：根据数据量自动选择最佳预测方法
-    3. **批量成绩预测**：一次预测多个学生或整个班级
-    4. **多层回退机制**：确保在任何情况下都能提供预测结果
-    5. **成绩异常检测**：识别异常波动的成绩
-    6. **科目关联分析**：分析科目之间的相关性
+    **智能版功能特色**：
+    1. **趋势感知预测**：深度分析学生成绩模式，识别上升/下降趋势
+    2. **迁移学习**：参考相似学生的学习轨迹进行智能预测
+    3. **聚类分析**：将学生按成绩模式分组，提供个性化预测
+    4. **智能批量预测**：支持多种预测模式和高级分析
+    5. **异常检测**：识别异常成绩波动
+    6. **科目关联分析**：分析科目间相关性
     """)
     
     # 选择分析类型
     st.markdown("### 📊 选择分析类型")
     analysis_type = st.selectbox(
         "分析类型",
-        ["成绩趋势分析（增强版）", "成绩预测（增强版）", "批量成绩预测", "成绩异常检测", "科目关联分析"],
+        ["成绩趋势分析（智能版）", "智能成绩预测", "智能批量成绩预测", "成绩异常检测", "科目关联分析"],
         key="analysis_type_select"
     )
     
-    if analysis_type == "成绩趋势分析（增强版）":
-        st.markdown("#### 📈 成绩趋势分析")
-        st.markdown("使用加权线性回归分析成绩趋势，考虑不同考试的重要性权重。")
+    if analysis_type == "成绩趋势分析（智能版）":
+        st.markdown("#### 📈 智能版成绩趋势分析")
+        st.markdown("深度分析学生成绩模式，识别长期和短期趋势。")
         
         # 选择班级和学生
         classes = sorted(st.session_state.df[st.session_state.class_column_name].dropna().astype(str).str.strip().unique())
@@ -3282,7 +3694,7 @@ def module_student_analysis():
                         exam_names = grades_df.loc[valid_mask, '考试场次'].tolist()
                         
                         if len(valid_data) >= 3:  # 至少需要3个数据点
-                            st.markdown("#### 📊 趋势分析报告")
+                            st.markdown("#### 🧠 智能模式分析")
                             
                             # 检查数据一致性
                             if len(valid_data) != len(exam_names):
@@ -3290,54 +3702,68 @@ def module_student_analysis():
                                 st.warning("可能存在数据质量问题，请检查原始数据")
                                 return
                             
-                            # 创建分析器
-                            enhanced_analyzer = EnhancedGradeTrendAnalyzer()
+                            # 创建智能预测器
+                            predictor = IntelligentGradePredictor()
                             
                             # 进行分析
-                            with st.spinner("正在进行趋势分析..."):
-                                # 获取考试权重
-                                exam_weights = []
-                                for i, exam_name in enumerate(exam_names):
-                                    is_recent = (i >= len(exam_names) - 3)
-                                    weight = enhanced_analyzer.weight_calculator.calculate_exam_weight(
-                                        exam_name, i, len(exam_names), is_recent
-                                    )
-                                    exam_weights.append(weight)
+                            with st.spinner("正在进行智能模式分析..."):
+                                # 分析学生模式
+                                pattern_info = predictor.analyze_student_pattern(valid_data.values)
                                 
-                                # 增强趋势分析
-                                trend_result = enhanced_analyzer.calculate_trend_stats(
-                                    valid_data.values, exam_names
-                                )
+                                # 使用智能预测
+                                prediction_result = predictor.smart_predict(valid_data.values, selected_student)
                             
-                            # 显示考试权重
-                            st.markdown("##### 📊 考试权重分析")
+                            # 显示模式分析结果
+                            st.markdown("##### 🎯 成绩模式分析")
                             col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("最近考试权重", f"{exam_weights[-1]:.2f}", 
-                                         f"权重最高: {max(exam_weights):.2f}")
-                            with col2:
-                                st.metric("权重波动", f"{np.std(exam_weights):.3f}",
-                                         f"平均权重: {np.mean(exam_weights):.2f}")
-                            with col3:
-                                recent_exams = [exam for i, exam in enumerate(exam_names) 
-                                              if i >= len(exam_names) - 3]
-                                st.metric("近期考试数", len(recent_exams), 
-                                         f"{', '.join(recent_exams)}")
                             
-                            # 显示趋势分析结果
-                            st.markdown("##### 📈 趋势分析结果")
-                            col1, col2, col3 = st.columns(3)
                             with col1:
-                                trend_emoji = "📈" if trend_result['slope'] > 0 else "📉" if trend_result['slope'] < 0 else "➡️"
-                                st.metric("成绩趋势", f"{trend_result['trend']} {trend_emoji}",
-                                         f"斜率: {trend_result['slope']:.3f}")
+                                pattern_type = pattern_info.get("pattern_type", "unknown")
+                                pattern_map = {
+                                    "strong_upward": "强上升趋势",
+                                    "recent_upward": "近期上升",
+                                    "strong_downward": "强下降趋势", 
+                                    "recent_downward": "近期下降",
+                                    "stable": "稳定",
+                                    "stable_low_volatility": "低波动稳定",
+                                    "volatile": "高波动",
+                                    "changed_at": "模式转变"
+                                }
+                                pattern_desc = pattern_map.get(pattern_type, pattern_type)
+                                pattern_emoji = "📈" if "upward" in pattern_type else "📉" if "downward" in pattern_type else "➡️"
+                                st.metric("成绩模式", f"{pattern_desc} {pattern_emoji}",
+                                         f"模式强度: {pattern_info.get('trend_strength', 0):.2f}")
+                            
                             with col2:
-                                stability_level = "高" if trend_result['stability'] < 0.1 else "中" if trend_result['stability'] < 0.2 else "低"
-                                st.metric("成绩稳定性", stability_level,
-                                         f"标准差/均值: {trend_result['stability']:.3f}")
+                                slope = pattern_info.get("slope", 0)
+                                trend = "上升" if slope > 0.1 else "下降" if slope < -0.1 else "平稳"
+                                trend_emoji = "📈" if slope > 0.1 else "📉" if slope < -0.1 else "➡️"
+                                st.metric("长期趋势", f"{trend} {trend_emoji}",
+                                         f"斜率: {slope:.3f}")
+                            
                             with col3:
-                                st.metric("历史平均分", f"{trend_result['mean_grade']:.1f}",
-                                         f"最新成绩: {trend_result['current_grade']:.1f}")
+                                recent_slope = pattern_info.get("recent_slope", 0)
+                                recent_trend = "上升" if recent_slope > 0.2 else "下降" if recent_slope < -0.2 else "平稳"
+                                st.metric("近期趋势", recent_trend,
+                                         f"近期斜率: {recent_slope:.3f}")
+                            
+                            # 显示统计数据
+                            st.markdown("##### 📊 统计信息")
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("历史平均分", f"{pattern_info.get('mean', 0):.1f}",
+                                         f"最新成绩: {valid_data.values[-1]:.1f}")
+                            
+                            with col2:
+                                std_score = pattern_info.get("std", 0)
+                                volatility = "高" if std_score > 10 else "中" if std_score > 5 else "低"
+                                st.metric("成绩波动性", volatility,
+                                         f"标准差: {std_score:.2f}")
+                            
+                            with col3:
+                                st.metric("有效考试次数", len(valid_data),
+                                         f"数据充足" if len(valid_data) >= 5 else "数据适中")
                             
                             # 创建趋势图表
                             st.markdown("##### 📈 可视化分析")
@@ -3352,20 +3778,25 @@ def module_student_analysis():
                             
                             if fig:
                                 # 添加趋势线
-                                x_vals = list(range(len(valid_grades_df['考试场次'])))
-                                y_vals = trend_result['intercept'] + trend_result['slope'] * np.array(x_vals)
+                                time_indices = np.arange(len(valid_grades_df['考试场次']))
+                                slope = pattern_info.get("slope", 0)
+                                intercept = pattern_info.get("mean", 0) - slope * (len(valid_grades_df['考试场次'])-1)/2
+                                y_vals = intercept + slope * time_indices
                                 
                                 # 添加预测点
-                                if 'next_grade' in trend_result:
+                                if 'prediction' in prediction_result:
                                     x_pred = [len(valid_grades_df['考试场次'])]
-                                    y_pred = [trend_result['next_grade']]
+                                    y_pred = [prediction_result['prediction']]
+                                    
+                                    # 缩小置信区间 - 从5改为2.5
+                                    confidence_interval = 2.5
                                     
                                     # 创建趋势线
                                     fig.add_trace(go.Scatter(
                                         x=valid_grades_df['考试场次'],
                                         y=y_vals,
                                         mode='lines',
-                                        name='趋势线',
+                                        name='长期趋势线',
                                         line=dict(color='red', width=2, dash='dash')
                                     ))
                                     
@@ -3374,31 +3805,95 @@ def module_student_analysis():
                                         x=[f'预测{len(valid_grades_df)+1}'],
                                         y=y_pred,
                                         mode='markers',
-                                        name='预测成绩',
-                                        marker=dict(size=12, color='green', symbol='star')
+                                        name='智能预测',
+                                        marker=dict(size=12, color='green', symbol='star'),
+                                        error_y=dict(
+                                            type='data',
+                                            array=[confidence_interval],  # 使用较小的置信区间
+                                            visible=True
+                                        )
                                     ))
                                 
-                                st.plotly_chart(fig, use_container_width=True, key="trend_analysis_chart")
+                                st.plotly_chart(fig, use_container_width=True, key="intelligent_trend_chart")
                             
                             # 显示预测结果
-                            st.markdown("##### 🔮 预测结果")
-                            if 'next_grade' in trend_result:
+                            st.markdown("##### 🔮 智能预测结果")
+                            if 'prediction' in prediction_result:
                                 col1, col2, col3 = st.columns(3)
+                                
                                 with col1:
                                     st.metric(
                                         "下次考试预测", 
-                                        f"{trend_result['next_grade']:.1f}",
-                                        f"基于加权线性回归"
+                                        f"{prediction_result['prediction']:.1f}",
+                                        f"基于{pattern_desc}模式"
                                     )
+                                
                                 with col2:
-                                    confidence_margin = 5 + 2 * (1 - trend_result.get('stability', 0.5))
-                                    st.metric("预测可靠性", f"±{confidence_margin:.1f}",
-                                             f"95%置信区间")
+                                    confidence_score = prediction_result.get('confidence_score', 0.5)
+                                    confidence_level = "高" if confidence_score > 0.7 else "中" if confidence_score > 0.5 else "低"
+                                    st.metric("预测置信度", f"{confidence_score:.1%}",
+                                             f"{confidence_level}置信度")
+                                
                                 with col3:
-                                    if trend_result['next_grade'] > trend_result.get('current_grade', 0):
-                                        improvement = trend_result['next_grade'] - trend_result.get('current_grade', 0)
-                                        st.metric("预计提升", f"+{improvement:.1f}",
-                                                 f"与当前成绩相比")
+                                    current_grade = valid_data.values[-1]
+                                    improvement = prediction_result['prediction'] - current_grade
+                                    trend = "上升" if improvement > 0 else "下降"
+                                    st.metric("预计变化", f"{trend} {abs(improvement):.1f}分",
+                                             f"与当前成绩相比")
+                            
+                            # 显示模式详情
+                            st.markdown("##### 🔍 模式详情")
+                            
+                            with st.expander("查看详细模式分析"):
+                                st.markdown(f"""
+                                **模式类型**: {pattern_desc}
+                                
+                                **长期趋势斜率**: {pattern_info.get('slope', 0):.3f}
+                                
+                                **近期趋势斜率**: {pattern_info.get('recent_slope', 0):.3f}
+                                
+                                **趋势强度**: {pattern_info.get('trend_strength', 0):.3f}
+                                
+                                **平均成绩**: {pattern_info.get('mean', 0):.1f}
+                                
+                                **成绩标准差**: {pattern_info.get('std', 0):.2f}
+                                
+                                **模式变化**: {pattern_info.get('has_pattern_change', False)}
+                                
+                                **变化点**: {pattern_info.get('change_point', '无')}
+                                
+                                **数据点数**: {len(valid_data)}
+                                """)
+                            
+                            # 显示预测方法说明
+                            st.markdown("##### 📖 预测方法说明")
+                            
+                            if 'transfer_learning' in prediction_result and prediction_result['transfer_learning']:
+                                st.success(f"""
+                                **✅ 使用融合预测方法**
+                                
+                                **趋势感知预测**: {prediction_result.get('base_prediction', 0):.1f}
+                                
+                                **迁移学习调整**: {prediction_result.get('transfer_prediction', 0):.1f}
+                                
+                                **相似学生数**: {prediction_result.get('similar_students_count', 0)}
+                                
+                                **平均相似度**: {prediction_result.get('avg_similarity', 0):.1%}
+                                
+                                **最终预测**: 趋势感知(70%) + 迁移学习(30%)
+                                """)
+                            else:
+                                st.info(f"""
+                                **ℹ️ 使用趋势感知预测**
+                                
+                                **基础预测**: {prediction_result.get('base_prediction', 0):.1f}
+                                
+                                **趋势调整**: {prediction_result.get('trend_adjustment', 0):.1f}
+                                
+                                **最终预测**: 基础预测 + 趋势调整
+                                
+                                **预测方法**: 自适应加权平均 + 趋势调整
+                                """)
                             
                             # 显示缺失数据信息
                             missing_count = len(subject_data) - len(valid_data)
@@ -3406,21 +3901,22 @@ def module_student_analysis():
                                 st.warning(f"⚠️ 注意：该科目有 {missing_count} 个缺失值，已自动过滤。分析基于 {len(valid_data)} 个有效成绩。")
                             
                             # 显示学习建议
-                            st.markdown("##### 💡 学习建议")
-                            suggestions = generate_enhanced_suggestions(trend_result)
+                            st.markdown("##### 💡 智能学习建议")
+                            
+                            suggestions = generate_intelligent_suggestions(pattern_info, prediction_result, valid_data.values[-1])
                             for suggestion in suggestions:
                                 st.info(suggestion)
                             
                         else:
-                            st.warning(f"需要至少3次有效成绩才能进行趋势分析，当前只有{len(valid_data)}次")
+                            st.warning(f"需要至少3次有效成绩才能进行智能分析，当前只有{len(valid_data)}次")
                 else:
                     st.info("没有找到可分析的成绩科目")
             else:
                 st.error(f"❌ 未找到学生 {selected_class} - {selected_student} 的成绩数据")
     
-    elif analysis_type == "成绩预测（增强版）":
-        st.markdown("#### 🔮 成绩预测")
-        st.markdown("智能选择最佳预测模型，根据数据量自动选择最合适的预测方法。")
+    elif analysis_type == "智能成绩预测":
+        st.markdown("#### 🔮 智能成绩预测")
+        st.markdown("结合趋势感知、迁移学习和聚类分析的智能预测。")
         
         # 选择班级和学生
         classes = sorted(st.session_state.df[st.session_state.class_column_name].dropna().astype(str).str.strip().unique())
@@ -3430,7 +3926,7 @@ def module_student_analysis():
             selected_class = st.selectbox(
                 "选择班级",
                 classes,
-                key="prediction_class_select"
+                key="intelligent_prediction_class_select"
             )
         
         with col2:
@@ -3443,7 +3939,7 @@ def module_student_analysis():
                     selected_student = st.selectbox(
                         "选择学生",
                         sorted(class_students),
-                        key="prediction_student_select"
+                        key="intelligent_prediction_student_select"
                     )
                 else:
                     st.warning("该班级没有学生数据")
@@ -3470,7 +3966,7 @@ def module_student_analysis():
                     selected_subject = st.selectbox(
                         "选择要预测的科目",
                         score_subjects,
-                        key="prediction_subject"
+                        key="intelligent_prediction_subject"
                     )
                     
                     if selected_subject and selected_subject in grades_df.columns:
@@ -3486,8 +3982,8 @@ def module_student_analysis():
                         # 获取对应的考试场次
                         exam_names = grades_df.loc[valid_mask, '考试场次'].tolist()
                         
-                        if len(valid_data) >= 3:  # 至少需要3个数据点
-                            st.markdown("#### 🤖 智能成绩预测")
+                        if len(valid_data) >= 2:  # 至少需要2个数据点
+                            st.markdown("#### 🤖 智能预测系统")
                             
                             # 检查数据一致性
                             if len(valid_data) != len(exam_names):
@@ -3495,186 +3991,245 @@ def module_student_analysis():
                                 st.warning("可能存在数据质量问题，请检查原始数据")
                                 return
                             
-                            with st.spinner("正在智能选择预测模型..."):
-                                try:
-                                    # 创建智能预测器
-                                    predictor = SmartGradePredictor(window_size=3, test_size=0.2)
-                                    
-                                    # 智能预测
-                                    prediction_result = predictor.smart_predict(valid_data.values, exam_names)
-                                    
-                                    if not prediction_result:
-                                        st.error("预测失败，无法生成预测结果")
-                                        return
-                                    
-                                    # 显示数据信息
-                                    st.markdown("##### 📊 数据信息")
-                                    col1, col2, col3 = st.columns(3)
-                                    
-                                    with col1:
-                                        st.metric("有效成绩数", len(valid_data))
-                                    
-                                    with col2:
-                                        data_quality = "充足" if len(valid_data) >= 8 else "中等" if len(valid_data) >= 5 else "较少"
-                                        st.metric("数据量", data_quality)
-                                    
-                                    with col3:
-                                        st.metric("缺失成绩数", len(subject_data) - len(valid_data))
-                                    
-                                    # 显示预测结果
-                                    st.markdown("##### 🔮 预测结果")
-                                    col1, col2, col3 = st.columns(3)
-                                    
-                                    with col1:
-                                        st.metric(
-                                            "下次考试预测", 
-                                            f"{prediction_result['prediction']:.1f}",
-                                            f"基于{prediction_result['method']}"
-                                        )
-                                    
-                                    with col2:
-                                        confidence_score = prediction_result.get('confidence_score', 0.5)
-                                        confidence_level = "高" if confidence_score > 0.7 else "中" if confidence_score > 0.5 else "低"
-                                        st.metric(
-                                            "预测置信度", 
-                                            f"{confidence_score:.1%} ({confidence_level})",
-                                            f"模型可靠性"
-                                        )
-                                    
-                                    with col3:
-                                        current_grade = valid_data.values[-1]
-                                        improvement = prediction_result['prediction'] - current_grade
-                                        trend = "上升" if improvement > 0 else "下降"
-                                        st.metric(
-                                            "预计变化", 
-                                            f"{trend} {abs(improvement):.1f}分",
-                                            f"与当前成绩相比"
-                                        )
-                                    
-                                    # 显示模型信息
-                                    st.markdown("##### 📈 模型信息")
-                                    
-                                    with st.expander("🔍 查看预测详情"):
-                                        st.markdown(f"""
-                                        **预测方法**：{prediction_result['method']}
-                                        
-                                        **模型名称**：{prediction_result.get('model_name', '未知')}
-                                        
-                                        **模型描述**：{prediction_result.get('model_description', '')}
-                                        
-                                        **预测值**：{prediction_result['prediction']:.1f}分
-                                        
-                                        **置信区间**：±{prediction_result.get('confidence_interval', 5):.1f}分
-                                        
-                                        **置信度**：{prediction_result.get('confidence_score', 0.5):.1%}
-                                        
-                                        **数据量**：{len(valid_data)}次有效考试
-                                        """)
-                                        
-                                        if prediction_result.get('test_r2') is not None:
-                                            st.markdown(f"**模型R²分数**：{prediction_result['test_r2']:.3f}")
-                                        
-                                        if prediction_result.get('trend'):
-                                            st.markdown(f"**成绩趋势**：{prediction_result['trend']}")
-                                    
-                                    # 可视化预测结果
-                                    st.markdown("##### 📈 预测可视化")
-                                    
-                                    # 创建一个过滤后的DataFrame，只包含有效成绩
-                                    valid_grades_df = grades_df.loc[valid_mask].copy()
-                                    
-                                    # 创建趋势图表
-                                    fig = ChartGenerator.create_grade_trend_chart(
-                                        valid_grades_df, [selected_subject], selected_student, selected_class
+                            # 收集全班数据用于迁移学习
+                            with st.spinner("收集班级数据用于迁移学习..."):
+                                all_students_scores = {}
+                                
+                                for student in class_students:
+                                    student_grades_df = GradeManager.get_student_grades(
+                                        st.session_state.df, selected_class, student,
+                                        st.session_state.class_column_name, st.session_state.name_column_name,
+                                        st.session_state.subjects, st.session_state.exams, 
+                                        st.session_state.column_mapping
                                     )
                                     
-                                    if fig:
-                                        # 添加预测点（星星标记）
-                                        next_exam_name = f'预测{len(valid_grades_df)+1}'
-                                        fig.add_trace(go.Scatter(
-                                            x=[next_exam_name],
-                                            y=[prediction_result['prediction']],
-                                            mode='markers',
-                                            name=f"{prediction_result['method']}预测",
-                                            marker=dict(size=12, color='green', symbol='star'),
-                                            error_y=dict(
-                                                type='data',
-                                                array=[prediction_result.get('confidence_interval', 5)],
-                                                visible=True
-                                            ),
-                                            hovertemplate=f'预测: %{{y:.1f}}<br>' +
-                                                         f'置信区间: ±{prediction_result.get("confidence_interval", 5):.1f}<br>' +
-                                                         f'方法: {prediction_result["method"]}<extra></extra>'
-                                        ))
-                                        
-                                        st.plotly_chart(fig, use_container_width=True, key="smart_prediction_chart")
+                                    if student_grades_df is not None and selected_subject in student_grades_df.columns:
+                                        scores = pd.to_numeric(student_grades_df[selected_subject], errors='coerce').dropna().values
+                                        if len(scores) >= 2:
+                                            all_students_scores[student] = scores
+                            
+                            with st.spinner("正在进行智能预测..."):
+                                # 创建智能预测器
+                                predictor = IntelligentGradePredictor(all_students_scores)
+                                
+                                # 进行智能预测
+                                prediction_result = predictor.smart_predict(
+                                    valid_data.values, selected_student, all_students_scores
+                                )
+                                
+                                if not prediction_result:
+                                    st.error("预测失败，无法生成预测结果")
+                                    return
+                                
+                                # 分析模式
+                                pattern_info = predictor.analyze_student_pattern(valid_data.values)
+                            
+                            # 显示数据信息
+                            st.markdown("##### 📊 数据信息")
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("有效成绩数", len(valid_data))
+                            
+                            with col2:
+                                data_quality = "充足" if len(valid_data) >= 6 else "中等" if len(valid_data) >= 3 else "较少"
+                                st.metric("数据量", data_quality)
+                            
+                            with col3:
+                                st.metric("班级学生数", len(all_students_scores))
+                            
+                            # 显示预测结果
+                            st.markdown("##### 🔮 预测结果")
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric(
+                                    "下次考试预测", 
+                                    f"{prediction_result['prediction']:.1f}",
+                                    f"基于{prediction_result.get('method', '智能预测')}"
+                                )
+                            
+                            with col2:
+                                confidence_score = prediction_result.get('confidence_score', 0.5)
+                                confidence_level = "高" if confidence_score > 0.7 else "中" if confidence_score > 0.5 else "低"
+                                st.metric(
+                                    "预测置信度", 
+                                    f"{confidence_score:.1%} ({confidence_level})",
+                                    f"模型可靠性"
+                                )
+                            
+                            with col3:
+                                current_grade = valid_data.values[-1]
+                                improvement = prediction_result['prediction'] - current_grade
+                                trend = "上升" if improvement > 0 else "下降"
+                                st.metric(
+                                    "预计变化", 
+                                    f"{trend} {abs(improvement):.1f}分",
+                                    f"与当前成绩相比"
+                                )
+                            
+                            # 显示模式信息
+                            st.markdown("##### 🎯 成绩模式")
+                            pattern_type = prediction_result.get('pattern', 'unknown')
+                            pattern_map = {
+                                "strong_upward": "强上升趋势",
+                                "recent_upward": "近期上升", 
+                                "strong_downward": "强下降趋势",
+                                "recent_downward": "近期下降",
+                                "stable": "稳定",
+                                "stable_low_volatility": "低波动稳定",
+                                "volatile": "高波动"
+                            }
+                            pattern_desc = pattern_map.get(pattern_type, pattern_type)
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("模式类型", pattern_desc)
+                            with col2:
+                                st.metric("趋势强度", f"{prediction_result.get('trend_strength', 0):.2f}")
+                            with col3:
+                                st.metric("斜率", f"{prediction_result.get('slope', 0):.3f}")
+                            
+                            # 显示预测详情
+                            st.markdown("##### 📈 预测详情")
+                            
+                            with st.expander("🔍 查看预测详情"):
+                                st.markdown(f"""
+                                **预测方法**: {prediction_result.get('method', '未知')}
+                                
+                                **基础预测值**: {prediction_result.get('base_prediction', 0):.1f}
+                                
+                                **趋势调整值**: {prediction_result.get('trend_adjustment', 0):.1f}
+                                
+                                **置信区间**: ±{prediction_result.get('confidence_interval', 5):.1f}
+                                
+                                **数据点数**: {len(valid_data)}
+                                """)
+                                
+                                if prediction_result.get('transfer_learning', False):
+                                    st.markdown(f"""
+                                    **迁移学习信息**:
+                                    - 相似学生数: {prediction_result.get('similar_students_count', 0)}
+                                    - 平均相似度: {prediction_result.get('avg_similarity', 0):.1%}
+                                    - 迁移预测值: {prediction_result.get('transfer_prediction', 0):.1f}
+                                    """)
+                            
+                            # 可视化预测结果
+                            st.markdown("##### 📈 预测可视化")
+                            
+                            # 创建一个过滤后的DataFrame，只包含有效成绩
+                            valid_grades_df = grades_df.loc[valid_mask].copy()
+                            
+                            # 创建趋势图表
+                            fig = ChartGenerator.create_grade_trend_chart(
+                                valid_grades_df, [selected_subject], selected_student, selected_class
+                            )
+                            
+                            if fig:
+                                # 添加趋势线
+                                time_indices = np.arange(len(valid_grades_df['考试场次']))
+                                slope = pattern_info.get("slope", 0)
+                                intercept = pattern_info.get("mean", 0) - slope * (len(valid_grades_df['考试场次'])-1)/2
+                                y_vals = intercept + slope * time_indices
+                                
+                                # 添加预测点
+                                x_pred = [len(valid_grades_df['考试场次'])]
+                                y_pred = [prediction_result['prediction']]
+                                
+                                # 缩小置信区间 - 从5改为2.5
+                                confidence_interval = 2.5
+                                
+                                # 创建趋势线
+                                fig.add_trace(go.Scatter(
+                                    x=valid_grades_df['考试场次'],
+                                    y=y_vals,
+                                    mode='lines',
+                                    name='长期趋势线',
+                                    line=dict(color='red', width=2, dash='dash')
+                                ))
+                                
+                                # 创建预测点（星星标记）
+                                fig.add_trace(go.Scatter(
+                                    x=[f'智能预测{len(valid_grades_df)+1}'],
+                                    y=y_pred,
+                                    mode='markers',
+                                    name=f"{prediction_result.get('method', '智能预测')}",
+                                    marker=dict(size=12, color='green', symbol='star'),
+                                    error_y=dict(
+                                        type='data',
+                                        array=[confidence_interval],  # 使用较小的置信区间
+                                        visible=True
+                                    ),
+                                    hovertemplate=f'预测: %{{y:.1f}}<br>' +
+                                                 f'置信区间: ±{confidence_interval:.1f}<br>' +
+                                                 f'方法: {prediction_result.get("method", "智能预测")}<extra></extra>'
+                                ))
+                                
+                                st.plotly_chart(fig, use_container_width=True, key="intelligent_prediction_chart")
+                            
+                            # 显示相似学生（如果使用了迁移学习）
+                            if prediction_result.get('transfer_learning', False) and all_students_scores:
+                                st.markdown("##### 👥 相似学生参考")
+                                
+                                # 寻找相似学生
+                                similar_students = predictor.find_similar_students(
+                                    valid_data.values, all_students_scores, n_similar=3
+                                )
+                                
+                                if similar_students:
+                                    st.info("**参考以下相似学生的学习轨迹：**")
                                     
-                                    # 显示方法选择说明
-                                    st.markdown("##### 💡 方法选择说明")
-                                    
-                                    if predictor.selected_method == "机器学习":
-                                        st.success("""
-                                        **✅ 已选择机器学习模型**
-                                        
-                                        系统检测到数据量充足（≥8次考试），并且机器学习模型表现良好，因此使用机器学习进行预测。
-                                        机器学习模型能够捕捉复杂的成绩变化模式，提供更准确的预测。
-                                        """)
-                                    elif predictor.selected_method == "加权线性回归":
-                                        st.info("""
-                                        **ℹ️ 已选择加权线性回归**
-                                        
-                                        系统检测到数据量中等（4-7次考试），使用加权线性回归进行预测。
-                                        加权线性回归考虑了不同考试的重要性权重，适合中等数据量的趋势预测。
-                                        """)
-                                    else:
-                                        st.warning("""
-                                        **⚠️ 已选择基础预测方法**
-                                        
-                                        系统检测到数据量较少（≤3次考试），使用基础预测方法。
-                                        建议收集更多考试成绩以获得更准确的预测。
-                                        """)
-                                    
-                                    # 显示学习建议
-                                    st.markdown("##### 💡 学习建议")
-                                    
-                                    suggestions = []
-                                    if prediction_result['prediction'] > current_grade:
-                                        suggestions.append(f"🔮 **预测成绩上升**：预计下次考试成绩为{prediction_result['prediction']:.1f}分，比当前提高{(prediction_result['prediction']-current_grade):.1f}分。")
-                                    elif prediction_result['prediction'] < current_grade:
-                                        suggestions.append(f"⚠️ **预测成绩下降**：预计下次考试成绩为{prediction_result['prediction']:.1f}分，比当前下降{(current_grade-prediction_result['prediction']):.1f}分，需要加强复习。")
-                                    
-                                    if len(valid_data) < 5:
-                                        suggestions.append("📈 **建议收集更多数据**：当前只有{len(valid_data)}次考试成绩，更多数据可以提高预测准确性。")
-                                    
-                                    for suggestion in suggestions:
-                                        st.info(suggestion)
-                                    
-                                except Exception as e:
-                                    st.error(f"预测失败: {str(e)}")
-                                    st.info("将使用简单加权平均进行预测")
-                                    
-                                    # 回退到简单加权平均
-                                    if len(valid_data) >= 2:
-                                        prediction = np.mean(valid_data.values[-min(3, len(valid_data)):])
-                                        st.metric("下次考试预测", f"{prediction:.1f}",
-                                                 f"基于最近{min(3, len(valid_data))}次平均")
+                                    for i, (student_name, similarity) in enumerate(similar_students[:3], 1):
+                                        if student_name in all_students_scores:
+                                            scores = all_students_scores[student_name]
+                                            if len(scores) > len(valid_data):
+                                                next_score = scores[len(valid_data)]  # 对应位置的下次成绩
+                                                
+                                                with st.expander(f"相似学生 {i}: {student_name} (相似度: {similarity:.1%})"):
+                                                    col1, col2, col3 = st.columns(3)
+                                                    with col1:
+                                                        st.metric("当前成绩", f"{scores[-1]:.1f}")
+                                                    with col2:
+                                                        st.metric("下次成绩", f"{next_score:.1f}")
+                                                    with col3:
+                                                        change = next_score - scores[-1]
+                                                        st.metric("实际变化", f"{change:+.1f}")
+                            
+                            # 显示学习建议
+                            st.markdown("##### 💡 智能学习建议")
+                            
+                            suggestions = []
+                            
+                            if prediction_result['prediction'] > current_grade:
+                                suggestions.append(f"🔮 **预测成绩上升**：预计下次考试成绩为{prediction_result['prediction']:.1f}分，比当前提高{improvement:.1f}分。")
+                            elif prediction_result['prediction'] < current_grade:
+                                suggestions.append(f"⚠️ **预测成绩下降**：预计下次考试成绩为{prediction_result['prediction']:.1f}分，比当前下降{abs(improvement):.1f}分，需要加强复习。")
+                            
+                            if pattern_type in ["strong_upward", "recent_upward"]:
+                                suggestions.append("📈 **保持上升趋势**：当前呈现上升趋势，继续保持当前的学习方法和努力程度。")
+                            elif pattern_type in ["strong_downward", "recent_downward"]:
+                                suggestions.append("📉 **注意下降趋势**：近期成绩有下降趋势，建议分析原因并调整学习策略。")
+                            elif pattern_type == "stable":
+                                suggestions.append("➡️ **成绩稳定**：成绩保持稳定，可以尝试挑战更高目标。")
+                            elif pattern_type == "volatile":
+                                suggestions.append("🎢 **成绩波动大**：成绩波动较大，建议分析波动原因，提高稳定性。")
+                            
+                            if len(valid_data) < 5:
+                                suggestions.append("📊 **建议收集更多数据**：更多考试成绩数据可以提高预测准确性。")
+                            
+                            for suggestion in suggestions:
+                                st.info(suggestion)
                             
                         else:
-                            st.warning(f"需要至少3次有效成绩才能进行预测，当前只有{len(valid_data)}次")
-                            st.info("""
-                            **建议**：
-                            1. 确保有足够的历史成绩数据
-                            2. 检查是否有缺失的考试成绩
-                            3. 至少需要3次有效成绩才能进行预测
-                            """)
+                            st.warning(f"需要至少2次有效成绩才能进行预测，当前只有{len(valid_data)}次")
                 else:
                     st.info("没有找到可预测的成绩科目")
             else:
                 st.error(f"❌ 未找到学生 {selected_class} - {selected_student} 的成绩数据")
     
-    elif analysis_type == "批量成绩预测":
-        # 调用批量预测功能
-        batch_grade_prediction()
+    elif analysis_type == "智能批量成绩预测":
+        # 调用智能批量预测功能
+        intelligent_batch_prediction()
     
     elif analysis_type == "成绩异常检测":
         st.markdown("#### ⚠️ 成绩异常检测")
@@ -4076,7 +4631,6 @@ def module_student_analysis():
                                         styled_df = correlation_matrix.style.format("{:.3f}")
                                         st.dataframe(styled_df, use_container_width=True, height=300)
                                     
-                                    
                                     st.info("""
                                     **相关性解读**：
                                     - **🔴 接近1**：强正相关（一科成绩好，另一科成绩也好）
@@ -4107,67 +4661,73 @@ def module_student_analysis():
 # ============================================
 # 辅助函数
 # ============================================
-def generate_enhanced_suggestions(trend_result):
-    """生成增强版学习建议"""
+def generate_intelligent_suggestions(pattern_info: Dict, prediction_result: Dict, current_grade: float) -> List[str]:
+    """
+    生成智能学习建议
+    
+    Args:
+        pattern_info: 模式信息
+        prediction_result: 预测结果
+        current_grade: 当前成绩
+        
+    Returns:
+        学习建议列表
+    """
     suggestions = []
     
-    # 基于趋势分析
-    if trend_result.get('trend') == "上升趋势":
-        suggestions.append("📈 **成绩呈显著上升趋势**：继续保持当前的学习方法和节奏，巩固优势科目的学习效果。")
-    elif trend_result.get('trend') == "轻微上升":
-        suggestions.append("↗️ **成绩有小幅提升**：在保持现有学习方法的基础上，可以尝试加强薄弱环节的练习。")
-    elif trend_result.get('trend') == "下降趋势":
-        suggestions.append("📉 **成绩呈下降趋势**：建议分析最近的学习状态，找出成绩下降的原因并及时调整学习策略。")
-    elif trend_result.get('trend') == "轻微下降":
-        suggestions.append("↘️ **成绩有小幅下滑**：注意近期考试的失分点，加强相关知识点的复习。")
-    else:
-        suggestions.append("➡️ **成绩保持平稳**：可以尝试设定更具挑战性的学习目标，推动成绩进一步提升。")
+    # 基于模式
+    pattern_type = pattern_info.get("pattern_type", "unknown")
+    slope = pattern_info.get("slope", 0)
+    trend_strength = pattern_info.get("trend_strength", 0)
     
-    # 基于稳定性
-    stability = trend_result.get('stability', 0)
-    if stability < 0.1:
-        suggestions.append("🎯 **成绩非常稳定**：说明学习状态稳定，可以尝试挑战更高难度的内容。")
-    elif stability > 0.3:
-        suggestions.append("🎢 **成绩波动较大**：建议分析波动原因，可能是知识点掌握不牢固或考试状态不稳定。")
+    if pattern_type in ["strong_upward", "recent_upward"]:
+        if trend_strength > 0.5:
+            suggestions.append("📈 **强上升趋势**：成绩呈现显著上升趋势，继续保持当前的学习动力和方法。")
+        else:
+            suggestions.append("↗️ **上升趋势**：成绩有小幅上升，可以考虑适当增加学习强度。")
+    
+    elif pattern_type in ["strong_downward", "recent_downward"]:
+        if trend_strength > 0.5:
+            suggestions.append("📉 **强下降趋势**：成绩下降明显，建议立即分析原因并调整学习策略。")
+        else:
+            suggestions.append("↘️ **轻微下降**：近期成绩有小幅下滑，注意查漏补缺。")
+    
+    elif pattern_type == "stable":
+        suggestions.append("➡️ **成绩稳定**：成绩保持稳定，可以尝试设定更具挑战性的目标。")
+    
+    elif pattern_type == "volatile":
+        suggestions.append("🎢 **成绩波动大**：成绩波动较大，建议分析波动原因，提高稳定性。")
+    
+    elif "changed_at" in pattern_type:
+        change_point = pattern_info.get("change_point", 0)
+        suggestions.append(f"🔄 **模式转变**：在第{change_point+1}次考试后成绩模式发生变化，可能由于学习方法或状态改变。")
+    
+    # 基于预测
+    if 'prediction' in prediction_result:
+        prediction = prediction_result['prediction']
+        confidence = prediction_result.get('confidence_score', 0.5)
+        
+        improvement = prediction - current_grade
+        
+        if improvement > 2:
+            if confidence > 0.7:
+                suggestions.append(f"🔮 **高置信度上升预测**：预计下次考试提高{improvement:.1f}分，置信度{confidence:.1%}。")
+            else:
+                suggestions.append(f"🔮 **可能上升**：预测成绩可能上升{improvement:.1f}分，但置信度较低({confidence:.1%})。")
+        elif improvement < -2:
+            if confidence > 0.7:
+                suggestions.append(f"⚠️ **高置信度下降预警**：预计下次考试下降{abs(improvement):.1f}分，需要引起重视。")
+            else:
+                suggestions.append(f"⚠️ **可能下降**：预测成绩可能下降{abs(improvement):.1f}分，建议加强复习。")
+        else:
+            suggestions.append("➡️ **预测基本稳定**：预计下次考试成绩与当前基本持平。")
+    
+    # 基于数据量
+    data_points = pattern_info.get("data_points", 0)
+    if data_points < 4:
+        suggestions.append("📊 **数据量较少**：当前只有有限的历史成绩，更多考试数据可以提高分析准确性。")
     
     return suggestions
-
-
-
-def generate_analysis_summary(student_name, subject, trend_result, missing_count=0):
-    """生成分析摘要"""
-    summary = f"""
-========== 学生成绩分析报告 ==========
-
-学生姓名：{student_name}
-分析科目：{subject}
-分析时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-缺失成绩数：{missing_count}
-
-【趋势分析结果】
-当前成绩：{trend_result.get('current_grade', 0):.1f}
-平均成绩：{trend_result.get('mean_grade', 0):.1f}
-成绩趋势：{trend_result.get('trend', '未知')}
-趋势强度：{trend_result.get('slope', 0):.3f}
-稳定性指标：{trend_result.get('stability', 0):.3f}
-
-【预测结果】
-下次考试预测：{trend_result.get('next_grade', 0):.1f}
-
-【学习建议】
-"""
-    
-    suggestions = generate_enhanced_suggestions(trend_result)
-    for i, suggestion in enumerate(suggestions, 1):
-        summary += f"{i}. {suggestion}\n"
-    
-    summary += """
-======================================
-备注：本报告基于加权线性回归算法生成，仅供参考。
-"""
-    
-    return summary
-
 
 
 
@@ -4578,9 +5138,8 @@ def main():
     
     # 页脚
     st.markdown("---")
-    st.caption("© 2026 学生成绩查询系统 | 版本 4.0 | 开发者：小基👩🏻‍🌾 ")
+    st.caption("© 2026 学生成绩查询系统 | 版本 4.5 | 开发者：小基👩🏻‍🌾 ")
 
 # 运行应用
 if __name__ == "__main__":
     main()
-
