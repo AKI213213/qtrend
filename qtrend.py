@@ -2197,7 +2197,7 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score
 import hashlib
-
+st.title("🎓 学生成绩查询系统")
 # 尝试导入statsmodels
 try:
     import statsmodels.api as sm
@@ -5152,3 +5152,4 @@ def main():
 # 运行应用
 if __name__ == "__main__":
     main()
+
