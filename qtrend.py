@@ -1,11 +1,4 @@
 import streamlit as st
-
-st.set_page_config(
-    page_title="学生成绩查询系统", 
-    layout="wide",
-    page_icon="🎓"
-)
-
 import pandas as pd
 import numpy as np
 import io
@@ -5099,13 +5092,11 @@ def main():
     FontManager.setup_chinese_font()
     
     # 页面配置
-    """
     st.set_page_config(
         page_title="学生成绩查询系统", 
         layout="wide",
         page_icon="🎓"
     )
-    """
     
     # 页面标题
     st.title("🎓 学生成绩查询系统")
