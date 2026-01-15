@@ -21,6 +21,27 @@ from typing import List, Dict, Tuple, Optional, Any
 
 warnings.filterwarnings('ignore') #无视警告
 
+# 导入必要的库
+import plotly.express as px
+from typing import List, Dict, Tuple, Optional, Union, Any
+from collections import defaultdict
+import math
+from scipy import stats
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+import hashlib
+
+# 尝试导入statsmodels
+try:
+    import statsmodels.api as sm
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    from statsmodels.tsa.api import SimpleExpSmoothing
+    statsmodels_available = True
+except ImportError:
+    statsmodels_available = False
+    st.warning("注意：statsmodels库未安装，将使用替代方法。")
+
 # ============================================
 # 配置类
 # ============================================
@@ -2180,26 +2201,7 @@ def module_batch_student_query():
 # 结合趋势感知、迁移学习和聚类分析的智能预测系统
 # ============================================
 
-# 导入必要的库
-import plotly.express as px
-from typing import List, Dict, Tuple, Optional, Union, Any
-from collections import defaultdict
-import math
-from scipy import stats
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import silhouette_score
-import hashlib
 
-# 尝试导入statsmodels
-try:
-    import statsmodels.api as sm
-    from statsmodels.tsa.holtwinters import ExponentialSmoothing
-    from statsmodels.tsa.api import SimpleExpSmoothing
-    statsmodels_available = True
-except ImportError:
-    statsmodels_available = False
-    st.warning("注意：statsmodels库未安装，将使用替代方法。")
 
 # ============================================
 # 智能成绩预测器类
@@ -5092,13 +5094,11 @@ def main():
     FontManager.setup_chinese_font()
     
     # 页面配置
-    """
     st.set_page_config(
         page_title="学生成绩查询系统", 
         layout="wide",
         page_icon="🎓"
     )
-    """
     
     # 页面标题
     st.title("🎓 学生成绩查询系统")
