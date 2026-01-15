@@ -20,7 +20,11 @@ import textwrap
 from typing import List, Dict, Tuple, Optional, Any
 
 warnings.filterwarnings('ignore') #无视警告
-
+st.set_page_config(
+    page_title="学生成绩查询系统",
+    layout="wide",
+    page_icon="🎓"
+)
 # ============================================
 # 配置类
 # ============================================
@@ -5144,3 +5148,4 @@ def main():
 # 运行应用
 if __name__ == "__main__":
     main()
+
