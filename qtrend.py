@@ -1482,13 +1482,13 @@ def get_available_subjects(show_rankings, subjects, grades_df):
 # ============================================
 def module_import_data():
     """模块1: 导入数据文件"""
-    st.markdown("## 📁 1. 导入数据文件")
-    st.markdown("上传包含学生成绩的Excel文件，系统将自动解析文件结构。")
+    st.markdown("## 📁 1. 导入支撑文件")
+    st.markdown("上传支撑文件，系统将自动解析文件结构。")
     
     uploaded_file = st.file_uploader(
         "选择Excel文件（支持.xlsx, .xls格式）",
         type=["xlsx", "xls"],
-        help="请上传包含学生成绩的Excel文件",
+        help="请上传支撑文件",
         key="module1_uploader"
     )
     
@@ -1560,9 +1560,8 @@ def module_import_data():
         st.info("""
         ### 📋 使用说明
         
-        1. **准备数据文件**
-           - Excel文件需要包含班级和学生姓名信息
-           - 成绩列命名格式：`科目` + `考试场次`
+        1. **支撑文件来源**
+           - 该文件年级会与此网站网址伴生发出
         
         2. **上传文件**
            - 点击"浏览文件"按钮或拖拽文件到上传区域
@@ -5140,9 +5139,8 @@ def main():
     
     # 页脚
     st.markdown("---")
-    st.caption("© 2026 学生成绩查询系统 | 版本 4.7 | 开发者：小基👩🏻‍🌾 ")
+    st.caption("© 2026 学生成绩查询系统 | 版本 4.5 | 开发者：小基👩🏻‍🌾 ")
 
 # 运行应用
 if __name__ == "__main__":
     main()
-
