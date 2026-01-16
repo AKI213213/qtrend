@@ -1581,7 +1581,7 @@ def module_single_student_query():
     st.markdown("## 🔍 2. 单个学生成绩查询")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
+        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
         return
     
     st.markdown("""
@@ -1781,7 +1781,7 @@ def module_batch_student_query():
     st.markdown("## 📋 3. 批量学生成绩查询")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
+        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
         return
     
     st.markdown("""
@@ -3608,7 +3608,7 @@ def module_student_analysis():
     st.markdown("## 📈 4. 学生成绩分析、预测")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
+        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
         return
     
     st.markdown("""
@@ -4745,7 +4745,7 @@ def module_class_analysis():
     st.markdown("## 🏫 5. 班级分析、对比、预测")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
+        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
         return
     
     st.markdown("""
@@ -5115,7 +5115,7 @@ def main():
     # 创建顶边栏
     st.markdown("---")
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📁 1. 导入数据文件",
+        "📁 1. 导入支撑文件",
         "🔍 2. 单个学生查询", 
         "📋 3. 批量学生查询",
         "📈 4. 学生分析预测",
@@ -5144,4 +5144,5 @@ def main():
 # 运行应用
 if __name__ == "__main__":
     main()
+
 
