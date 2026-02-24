@@ -23,6 +23,7 @@ import sys
 import warnings
 import textwrap
 from typing import List, Dict, Tuple, Optional, Any
+import plotly.express as px
 
 warnings.filterwarnings('ignore') #无视警告
 
@@ -1478,10 +1479,10 @@ def get_available_subjects(show_rankings, subjects, grades_df):
         return [s for s in subjects if s in grades_df.columns and '排' not in s]
 
 # ============================================
-# 模块1: 导入支撑文件
+# 模块1: 导入数据文件
 # ============================================
 def module_import_data():
-    """模块1: 导入支撑文件"""
+    """模块1: 导入数据文件"""
     st.markdown("## 📁 1. 导入支撑文件")
     st.markdown("上传支撑文件，系统将自动解析文件结构。")
     
@@ -1581,7 +1582,7 @@ def module_single_student_query():
     st.markdown("## 🔍 2. 单个学生成绩查询")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
+        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
         return
     
     st.markdown("""
@@ -1781,7 +1782,7 @@ def module_batch_student_query():
     st.markdown("## 📋 3. 批量学生成绩查询")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
+        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
         return
     
     st.markdown("""
@@ -3608,7 +3609,7 @@ def module_student_analysis():
     st.markdown("## 📈 4. 学生成绩分析、预测")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
+        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
         return
     
     st.markdown("""
@@ -4745,7 +4746,7 @@ def module_class_analysis():
     st.markdown("## 🏫 5. 班级分析、对比、预测")
     
     if not st.session_state.data_loaded:
-        st.warning("请先上传支撑文件（切换到'导入支撑文件'模块）")
+        st.warning("请先上传数据文件（切换到'导入数据文件'模块）")
         return
     
     st.markdown("""
@@ -5085,6 +5086,1384 @@ def module_class_analysis():
         st.write("3. 班级进步空间分析")
 
 # ============================================
+# 模块6: 多考试极坐标图表生成 - 完整整合版
+# ============================================
+# 严格按照指定的科目顺序
+SUBJECTS = ["语文", "数学", "英语", "俄语", "日语", "物理", "化学", "生物", "历史", "政治", "地理"]
+
+# 使用ECharts风格的鲜艳配色方案
+ECHARTS_COLORS = [
+    '#5470c6', '#91cc75', '#fac858', '#ee6666', '#F830AE',
+    '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc', '#73c0de',
+    '#97b552', '#95706d', '#dc69aa', '#07a2a4', '#9a7fd1',
+    '#588dd5', '#c05050', '#59678c', '#c9ab00','#c14089',
+    '#7eb00a', '#6f5553'
+]
+
+
+def hex_to_rgba(hex_color, alpha=0.25):
+    """将十六进制颜色转换为RGBA格式"""
+    hex_color = hex_color.lstrip('#')
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return f'rgba({r}, {g}, {b}, {alpha})'
+
+
+class ExamDataProcessor:
+    """考试数据处理类"""
+    
+    def __init__(self):
+        self.processed_data = {}
+        self.exam_names = []
+        
+    def parse_excel_sheet(self, df: pd.DataFrame, sheet_name: str) -> Dict:
+        """
+        解析单个考试sheet的数据
+        严格按照指定的科目顺序：语文、数学、英语、俄语、日语、物理、化学、生物、历史、政治、地理
+        """
+        result = {
+            'exam_name': sheet_name,
+            'subjects': {},
+            'raw_data': {},
+            'summary_stats': {}
+        }
+        
+        # 将DataFrame转换为二维数组便于处理
+        data = df.fillna('').values.tolist()
+        
+        # 记录已找到的科目数量
+        subject_count = 0
+        current_headers = []
+        current_rows = []
+        in_subject_data = False
+        
+        for i, row in enumerate(data):
+            row = [str(cell).strip() for cell in row]
+            
+            # 检查是否是新科目的开始（以"班级"开头）
+            if len(row) > 0 and row[0] == '班级':
+                # 保存上一个科目的数据
+                if in_subject_data and current_rows and subject_count > 0:
+                    # 使用预定义的科目顺序
+                    if subject_count - 1 < len(SUBJECTS):
+                        current_subject = SUBJECTS[subject_count - 1]
+                    else:
+                        # 如果超过了预定义的科目数，使用通用名称
+                        current_subject = f"科目{subject_count}"
+                    
+                    result['subjects'][current_subject] = {
+                        'headers': current_headers,
+                        'data': current_rows
+                    }
+                    df = self._create_dataframe(current_headers, current_rows)
+                    result['raw_data'][current_subject] = df
+                    result['summary_stats'][current_subject] = self._calculate_subject_stats(df, current_subject)
+                
+                # 开始新科目
+                current_headers = row
+                current_rows = []
+                in_subject_data = True
+                subject_count += 1
+                
+            elif in_subject_data and row[0].isdigit():  # 数据行（班级行）
+                # 确保行长度与表头匹配
+                if len(row) < len(current_headers):
+                    row = row + [''] * (len(current_headers) - len(row))
+                elif len(row) > len(current_headers):
+                    row = row[:len(current_headers)]
+                
+                current_rows.append(row)
+        
+        # 保存最后一个科目的数据
+        if in_subject_data and current_rows and subject_count > 0:
+            # 使用预定义的科目顺序
+            if subject_count - 1 < len(SUBJECTS):
+                current_subject = SUBJECTS[subject_count - 1]
+            else:
+                current_subject = f"科目{subject_count}"
+            
+            result['subjects'][current_subject] = {
+                'headers': current_headers,
+                'data': current_rows
+            }
+            df = self._create_dataframe(current_headers, current_rows)
+            result['raw_data'][current_subject] = df
+            result['summary_stats'][current_subject] = self._calculate_subject_stats(df, current_subject)
+        
+        return result
+    
+    def _create_dataframe(self, headers: List[str], rows: List[List[str]]) -> pd.DataFrame:
+        """创建科目的DataFrame"""
+        if not rows or not headers:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(rows, columns=headers)
+        
+        # 转换数据类型
+        for col in df.columns[1:]:  # 跳过班级列
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        df[df.columns[0]] = pd.to_numeric(df[df.columns[0]], errors='coerce')
+        return df
+    
+    def _calculate_subject_stats(self, df: pd.DataFrame, subject: str) -> Dict[str, Any]:
+        """计算科目的统计指标"""
+        if df.empty or len(df.columns) < 2:
+            return {}
+        
+        score_columns = df.columns[1:]  # 分数区间列
+        total_students = df[score_columns].sum().sum()
+        
+        # 计算每个分数区间的统计
+        interval_stats = {}
+        for col in score_columns:
+            interval_total = df[col].sum()
+            interval_avg = df[col].mean() if len(df) > 0 else 0
+            interval_std = df[col].std() if len(df) > 1 else 0
+            interval_percentage = (interval_total / total_students * 100) if total_students > 0 else 0
+            
+            interval_stats[col] = {
+                'total': int(interval_total),
+                'avg': round(interval_avg, 2),
+                'std': round(interval_std, 2),
+                'percentage': round(interval_percentage, 2)
+            }
+        
+        # 计算每个班级的统计
+        class_stats = {}
+        for idx, row in df.iterrows():
+            class_num = int(row[0]) if pd.notna(row[0]) else idx + 1
+            class_total = row[1:].sum()
+            class_max_interval = score_columns[row[1:].argmax()] if class_total > 0 else "无"
+            class_max_value = row[1:].max()
+            
+            class_stats[class_num] = {
+                'total': int(class_total),
+                'max_interval': class_max_interval,
+                'max_value': int(class_max_value)
+            }
+        
+        return {
+            'total_students': int(total_students),
+            'class_count': len(df),
+            'interval_count': len(score_columns),
+            'interval_stats': interval_stats,
+            'class_stats': class_stats
+        }
+    
+    def process_multiple_sheets(self, excel_file) -> Dict:
+        """处理包含多个sheet的Excel文件"""
+        all_exam_data = {}
+        sheet_names = []
+        
+        for sheet_name in excel_file.sheet_names:
+            try:
+                df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+                exam_data = self.parse_excel_sheet(df, sheet_name)
+                all_exam_data[sheet_name] = exam_data
+                sheet_names.append(sheet_name)
+                
+                st.info(f"✅ 已处理考试: {sheet_name}")
+                # 显示找到的科目
+                found_subjects = list(exam_data['subjects'].keys())
+                st.write(f"  - 找到科目: {', '.join(found_subjects)}")
+                
+            except Exception as e:
+                st.error(f"处理sheet '{sheet_name}' 时出错: {str(e)}")
+        
+        self.processed_data = all_exam_data
+        self.exam_names = sheet_names
+        return all_exam_data
+    
+    def get_subject_data(self, exam_name: str, subject: str) -> pd.DataFrame:
+        """获取特定考试和科目的数据"""
+        if exam_name in self.processed_data and subject in self.processed_data[exam_name]['raw_data']:
+            return self.processed_data[exam_name]['raw_data'][subject]
+        return pd.DataFrame()
+    
+    def get_available_subjects(self, exam_name: str) -> List[str]:
+        """获取特定考试中可用的科目"""
+        if exam_name in self.processed_data:
+            return list(self.processed_data[exam_name]['subjects'].keys())
+        return []
+    
+    def get_class_list(self, exam_name: str, subject: str) -> List[int]:
+        """获取特定考试科目的班级列表"""
+        if exam_name in self.processed_data and subject in self.processed_data[exam_name]['raw_data']:
+            df = self.processed_data[exam_name]['raw_data'][subject]
+            if not df.empty:
+                return sorted(df.iloc[:, 0].dropna().astype(int).tolist())
+        return []
+
+
+def create_extended_polar_chart(df: pd.DataFrame, subject: str, exam_name: str, 
+                               use_percentage: bool = False, auto_scale: bool = True,
+                               show_grid: bool = True, grid_opacity: float = 0.2,
+                               radial_scale_factor: float = 1.0) -> go.Figure:
+    """
+    创建扩展版交互式极坐标堆叠柱状图
+    
+    Args:
+        df: 数据DataFrame
+        subject: 科目名称
+        exam_name: 考试名称
+        use_percentage: 是否使用百分比显示
+        auto_scale: 是否自动缩放
+        show_grid: 是否显示网格
+        grid_opacity: 网格透明度
+        radial_scale_factor: 径向轴缩放系数（1.0-2.0），用于拉长坐标轴
+    """
+    if df.empty or len(df.columns) < 2:
+        fig = go.Figure()
+        fig.add_annotation(text="无有效数据", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
+    
+    # 提取数据
+    class_col = df.columns[0]
+    score_columns = df.columns[1:]  # 分数区间列
+    class_labels = df[class_col].astype(str).tolist()
+    
+    # 准备数据
+    if use_percentage:
+        # 计算每个班级的百分比
+        df_percent = df.copy()
+        for col in score_columns:
+            total = df_percent[score_columns].sum(axis=1)
+            df_percent[col] = df_percent[col] / total * 100
+        data_source = df_percent
+        y_title = "百分比 (%)"
+    else:
+        data_source = df
+        y_title = "人数"
+    
+    # 计算最大值用于自动缩放
+    max_value = 0
+    for col in score_columns:
+        col_max = data_source[col].max()
+        if col_max > max_value:
+            max_value = col_max
+    
+    # 准备极坐标图数据
+    fig = go.Figure()
+    
+    # 添加堆叠柱状图
+    for i, score_col in enumerate(score_columns):
+        color_idx = i % len(ECHARTS_COLORS)
+        
+        fig.add_trace(go.Barpolar(
+            r=data_source[score_col].fillna(0).tolist(),
+            theta=class_labels,
+            name=score_col,
+            marker_color=ECHARTS_COLORS[color_idx],
+            opacity=0.85,
+            hovertemplate=(
+                f"<b>{subject} - {exam_name}</b><br>" +
+                f"分数区间: {score_col}<br>" +
+                f"班级: %{{theta}}<br>" +
+                f"{'百分比' if use_percentage else '人数'}: %{{r:.1f}}{'%' if use_percentage else ''}<br>" +
+                "<extra></extra>"
+            )
+        ))
+    
+    # 计算自动缩放的范围
+    radial_range = None
+    if auto_scale and max_value > 0:
+        # 使用径向轴缩放系数来拉长坐标轴
+        radial_range = [0, max_value * 1.2 * radial_scale_factor]  # 留20%的边距，再乘以缩放系数
+    
+    # 网格设置
+    gridcolor = f'rgba(52, 73, 94, {grid_opacity})' if show_grid else 'rgba(52, 73, 94, 0)'
+    linecolor = '#34495e' if show_grid else 'rgba(52, 73, 94, 0)'
+    
+    # 更新布局
+    fig.update_layout(
+        title={
+            'text': f"{subject} - {exam_name} (极坐标图)",
+            'font': {'size': 20, 'color': '#2c3e50'},
+            'x': 0.5,
+            'xanchor': 'center',
+            'y': 0.9,
+            'pad': {'t': 30}
+        },
+        polar=dict(
+            # 增加极坐标的半径，使其看起来更大
+            domain=dict(
+                x=[0.1, 0.9],
+                y=[0.1, 0.9]
+            ),
+            radialaxis=dict(
+                visible=True,
+                showticklabels=True,
+                ticks='outside',
+                range=radial_range,
+                tickfont=dict(size=12, color='#34495e'),
+                gridcolor=gridcolor,
+                linecolor=linecolor,
+                linewidth=2 if show_grid else 0,
+                ticklen=8,
+                tickwidth=2
+            ),
+            angularaxis=dict(
+                direction="clockwise",
+                rotation=90,
+                tickfont=dict(size=12, color='#34495e'),
+                gridcolor=gridcolor,
+                linecolor=linecolor,
+                linewidth=2 if show_grid else 0,
+                ticklen=8,
+                tickwidth=2
+            ),
+            bgcolor='rgba(245, 245, 245, 0.1)',
+            radialaxis_showticklabels=True,
+            radialaxis_ticks="outside"
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='#bdc3c7',
+            borderwidth=1
+        ),
+        height=700,
+        width=900,
+        template="plotly_white",
+        hovermode='closest',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=50, r=50, t=100, b=100)
+    )
+    
+    # 添加副标题
+    fig.add_annotation(
+        text=f"班级数: {len(df)} | 分数区间: {len(score_columns)} | 总人数: {df[score_columns].sum().sum()}",
+        x=0.5,
+        y=0.01,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        font=dict(size=12, color='#7f8c8d')
+    )
+    
+    return fig
+
+
+def create_horizontal_stacked_bar_chart(df: pd.DataFrame, subject: str, exam_name: str, 
+                                       selected_classes: List[int] = None,
+                                       use_percentage: bool = False) -> go.Figure:
+    """
+    创建横向堆叠柱状图，用于班级对比
+    
+    Args:
+        df: 数据DataFrame
+        subject: 科目名称
+        exam_name: 考试名称
+        selected_classes: 选中的班级列表，为None时显示所有班级
+        use_percentage: 是否使用百分比显示
+    """
+    if df.empty or len(df.columns) < 2:
+        fig = go.Figure()
+        fig.add_annotation(text="无有效数据", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
+    
+    # 提取数据
+    class_col = df.columns[0]
+    score_columns = df.columns[1:]  # 分数区间列
+    
+    # 如果指定了班级，则筛选数据
+    if selected_classes is not None and len(selected_classes) > 0:
+        filtered_df = df[df[class_col].isin(selected_classes)].copy()
+    else:
+        filtered_df = df.copy()
+    
+    if filtered_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="无符合条件的班级数据", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        return fig
+    
+    # 排序班级
+    filtered_df = filtered_df.sort_values(by=class_col)
+    filtered_df[class_col] = filtered_df[class_col].astype(int).astype(str) + "班"
+    class_labels = filtered_df[class_col].tolist()
+    
+    # 准备数据
+    if use_percentage:
+        # 计算每个班级的百分比
+        filtered_df_percent = filtered_df.copy()
+        for col in score_columns:
+            total = filtered_df_percent[score_columns].sum(axis=1)
+            filtered_df_percent[col] = filtered_df_percent[col] / total * 100
+        data_source = filtered_df_percent
+        y_title = "百分比 (%)"
+    else:
+        data_source = filtered_df
+        y_title = "人数"
+    
+    # 创建横向堆叠柱状图
+    fig = go.Figure()
+    
+    # 为每个分数区间添加轨迹
+    for i, score_col in enumerate(score_columns):
+        color_idx = i % len(ECHARTS_COLORS)
+        
+        fig.add_trace(go.Bar(
+            y=class_labels,
+            x=data_source[score_col].fillna(0).tolist(),
+            name=score_col,
+            orientation='h',
+            marker=dict(
+                color=ECHARTS_COLORS[color_idx],
+                line=dict(color='white', width=1)
+            ),
+            opacity=0.85,
+            hovertemplate=(
+                f"<b>{subject} - {exam_name}</b><br>" +
+                f"分数区间: {score_col}<br>" +
+                f"班级: %{{y}}<br>" +
+                f"{'百分比' if use_percentage else '人数'}: %{{x:.1f}}{'%' if use_percentage else ''}<br>" +
+                "<extra></extra>"
+            )
+        ))
+    
+    # 更新布局
+    fig.update_layout(
+        title={
+            'text': f"{subject} - {exam_name} (班级对比图)",
+            'font': {'size': 20, 'color': '#2c3e50'},
+            'x': 0.5,
+            'xanchor': 'center',
+            'y': 1,
+            'pad': {'t': 30}
+        },
+        xaxis=dict(
+            title=y_title,
+            gridcolor='rgba(52, 73, 94, 0.2)',
+            showgrid=True,
+            tickfont=dict(size=12, color='#34495e'),
+            titlefont=dict(size=14, color='#2c3e50'),
+            ticklen=5,
+            tickwidth=2
+        ),
+        yaxis=dict(
+            title="班级",
+            tickfont=dict(size=12, color='#34495e'),
+            titlefont=dict(size=14, color='#2c3e50'),
+            ticklen=5,
+            tickwidth=2,
+            categoryorder='category ascending'  # 按班级顺序排序
+        ),
+        barmode='stack',
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.00,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='#bdc3c7',
+            borderwidth=1
+        ),
+        height=600 + len(class_labels) * 20,  # 根据班级数量调整高度
+        template="plotly_white",
+        hovermode='closest',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=50, r=50, t=100, b=100)
+    )
+    
+    # 添加副标题
+    if selected_classes is not None and len(selected_classes) > 0:
+        class_info = f"选中班级: {len(selected_classes)}个"
+    else:
+        class_info = f"全部班级: {len(class_labels)}个"
+    
+    fig.add_annotation(
+        text=f"{class_info} | 分数区间: {len(score_columns)} | 总人数: {filtered_df[score_columns].sum().sum()}",
+        x=0.5,
+        y=0.01,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        font=dict(size=12, color='#7f8c8d')
+    )
+    
+    return fig
+
+
+def create_extended_radar_chart(exam_data_dict: Dict[str, pd.DataFrame], subject: str) -> go.Figure:
+    """
+    创建扩展版雷达图用于考试对比
+    """
+    fig = go.Figure()
+    
+    # 为每个考试添加雷达图轨迹
+    colors = ECHARTS_COLORS[:len(exam_data_dict)]
+    
+    for idx, (exam_name, df) in enumerate(exam_data_dict.items()):
+        if df.empty or len(df.columns) < 2:
+            continue
+        
+        score_columns = df.columns[1:]
+        
+        # 计算每个分数区间的总人数
+        interval_totals = df[score_columns].sum().tolist()
+        categories = list(score_columns)
+        
+        # 闭合雷达图
+        r = interval_totals + [interval_totals[0]]  # 闭合
+        theta = categories + [categories[0]]  # 闭合
+        
+        fig.add_trace(go.Scatterpolar(
+            r=r,
+            theta=theta,
+            name=exam_name,
+            fill='toself',
+            fillcolor=hex_to_rgba(colors[idx], 0.25),  # 使用RGBA格式设置透明度
+            line=dict(color=colors[idx], width=2),
+            hovertemplate=(
+                f"<b>{exam_name}</b><br>" +
+                f"分数区间: %{{theta}}<br>" +
+                f"人数: %{{r}}<br>" +
+                "<extra></extra>"
+            )
+        ))
+    
+    fig.update_layout(
+        title={
+            'text': f"{subject} - 多考试对比雷达图",
+            'font': {'size': 20, 'color': '#2c3e50'},
+            'x': 0.5,
+            'xanchor': 'center',
+            'y': 0.95
+        },
+        polar=dict(
+            # 增加极坐标半径
+            domain=dict(
+                x=[0.1, 0.9],
+                y=[0.1, 0.9]
+            ),
+            radialaxis=dict(
+                visible=True,
+                showticklabels=True,
+                ticks='outside',
+                gridcolor='rgba(52, 73, 94, 0.2)',
+                linecolor='#34495e',
+                ticklen=8,
+                tickwidth=2
+            ),
+            angularaxis=dict(
+                gridcolor='rgba(52, 73, 94, 0.2)',
+                linecolor='#34495e',
+                ticklen=8,
+                tickwidth=2
+            ),
+            bgcolor='rgba(245, 245, 245, 0.1)'
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12)
+        ),
+        height=600,
+        template="plotly_white",
+        hovermode='closest',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=50, r=50, t=80, b=50)
+    )
+    
+    return fig
+
+
+def data_import_tab():
+    """数据导入标签页"""
+    st.markdown("### 📁 考试数据导入")
+    
+    uploaded_file = st.file_uploader(
+        "上传包含多个考试sheet的Excel文件",
+        type=['xlsx', 'xls'],
+        help="每个sheet代表一场考试，包含多个科目的分数区间数据",
+        key="multi_exam_upload"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            with st.spinner("正在解析Excel文件..."):
+                excel_file = pd.ExcelFile(uploaded_file)
+                processor = st.session_state.exam_processor
+                all_exam_data = processor.process_multiple_sheets(excel_file)
+                
+                if all_exam_data:
+                    st.success(f"✅ 数据解析完成！共处理 {len(all_exam_data)} 场考试")
+                    
+                    # 显示考试概览
+                    st.markdown("### 📋 考试数据概览")
+                    overview_data = []
+                    
+                    for exam_name, exam_data in all_exam_data.items():
+                        for subject, data in exam_data['subjects'].items():
+                            df = exam_data['raw_data'][subject]
+                            stats = exam_data['summary_stats'][subject]
+                            if not df.empty:
+                                overview_data.append({
+                                    '考试名称': exam_name,
+                                    '科目': subject,
+                                    '班级数': stats.get('class_count', 0),
+                                    '分数区间数': stats.get('interval_count', 0),
+                                    '总人数': stats.get('total_students', 0)
+                                })
+                    
+                    if overview_data:
+                        overview_df = pd.DataFrame(overview_data)
+                        st.dataframe(overview_df, use_container_width=True)
+                        
+                        # 统计信息
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("考试场次", len(all_exam_data))
+                        with col2:
+                            total_subjects = sum(len(exam['subjects']) for exam in all_exam_data.values())
+                            st.metric("总科目数", total_subjects)
+                        with col3:
+                            total_classes = sum(stats.get('class_count', 0) for exam in all_exam_data.values() 
+                                              for stats in exam['summary_stats'].values())
+                            st.metric("总班级数", total_classes)
+                        with col4:
+                            total_students = overview_df['总人数'].sum()
+                            st.metric("总人数", f"{total_students:,}")
+                    
+                    # 显示原始数据预览
+                    st.markdown("### 👀 原始数据预览")
+                    selected_exam = st.selectbox(
+                        "选择考试查看详情",
+                        list(all_exam_data.keys()),
+                        key="exam_preview_select"
+                    )
+                    
+                    if selected_exam:
+                        selected_subject = st.selectbox(
+                            "选择科目",
+                            list(all_exam_data[selected_exam]['subjects'].keys()),
+                            key="subject_preview_select"
+                        )
+                        
+                        if selected_subject:
+                            df = all_exam_data[selected_exam]['raw_data'][selected_subject]
+                            stats = all_exam_data[selected_exam]['summary_stats'][selected_subject]
+                            
+                            st.dataframe(df, use_container_width=True)
+                            
+                            # 显示详细统计
+                            st.markdown(f"**{selected_subject} 详细统计**")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("班级数", stats.get('class_count', 0))
+                            with col2:
+                                st.metric("分数区间数", stats.get('interval_count', 0))
+                            with col3:
+                                st.metric("总人数", stats.get('total_students', 0))
+                            with col4:
+                                avg_per_class = round(stats.get('total_students', 0) / max(stats.get('class_count', 1), 1))
+                                st.metric("班级平均人数", avg_per_class)
+                            
+                            # 显示分数区间统计
+                            st.markdown("**📊 分数区间统计**")
+                            interval_data = []
+                            for interval, interval_stats in stats.get('interval_stats', {}).items():
+                                interval_data.append({
+                                    '分数区间': interval,
+                                    '总人数': int(interval_stats.get('total', 0)),
+                                    '班级平均': f"{interval_stats.get('avg', 0):.1f}",
+                                    '标准差': f"{interval_stats.get('std', 0):.1f}",
+                                    '占比(%)': f"{interval_stats.get('percentage', 0):.1f}"
+                                })
+                            
+                            if interval_data:
+                                interval_df = pd.DataFrame(interval_data)
+                                st.dataframe(interval_df, use_container_width=True)
+                else:
+                    st.warning("未找到有效的考试数据")
+        
+        except Exception as e:
+            st.error(f"❌ 处理文件时出错: {str(e)}")
+
+
+def create_unified_comparison_interface(df: pd.DataFrame, subject: str, exam_name: str, 
+                                      available_classes: List[int], stats: Dict[str, Any]):
+    """
+    创建统一的比较界面，同时显示两种视图
+    """
+    if df.empty:
+        st.warning("无有效数据")
+        return
+    
+    # 创建双列布局
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown(f"##### 🔧 图表配置 - {exam_name}")
+        
+        # 通用配置
+        use_percentage = st.checkbox("使用百分比显示", value=False, 
+                                    help="将数据显示为百分比，便于班级间对比", 
+                                    key=f"percent_{exam_name}_{subject}")
+        
+        # 极坐标图配置
+        with st.expander("⚙️ 极坐标图配置", expanded=True):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                show_grid = st.checkbox("显示网格", value=True, 
+                                      help="显示极坐标网格线", 
+                                      key=f"grid_{exam_name}_{subject}")
+            with col_b:
+                auto_scale = st.checkbox("自动缩放", value=True, 
+                                       help="根据数据范围自动调整坐标轴", 
+                                       key=f"autoscale_{exam_name}_{subject}")
+            
+            col_c, col_d = st.columns(2)
+            with col_c:
+                grid_opacity = st.slider("网格透明度", 0.0, 1.0, 0.2, 0.1, 
+                                        help="调整网格线的透明度", 
+                                        key=f"opacity_{exam_name}_{subject}")
+            with col_d:
+                radial_scale_factor = st.slider("坐标轴拉长", 1.0, 3.0, 1.8, 0.1,
+                                               help="拉长坐标轴，使图表更舒展", 
+                                               key=f"scale_{exam_name}_{subject}")
+            
+            bar_opacity = st.slider("柱状图透明度", 0.5, 1.0, 0.85, 0.05,
+                                   help="调整柱状图的透明度", 
+                                   key=f"bar_opacity_{exam_name}_{subject}")
+    
+    with col2:
+        st.markdown("##### 🎯 班级选择（仅影响横向对比图）")
+        if available_classes:
+            selected_classes = st.multiselect(
+                "选择要对比的班级（不选则显示全部）",
+                available_classes,
+                help="可多选班级进行对比，默认显示所有班级",
+                key=f"classes_{exam_name}_{subject}"
+            )
+        else:
+            st.warning("未找到班级数据")
+            selected_classes = None
+        
+        # 图表高度配置
+        st.markdown("##### 📏 图表高度")
+        col_e, col_f = st.columns(2)
+        with col_e:
+            polar_height = st.slider("极坐标图高度", 400, 1200, 750, 
+                                    key=f"polar_height_{exam_name}_{subject}")
+        with col_f:
+            bar_height = st.slider("横向图高度", 400, 800, 500, 
+                                  key=f"bar_height_{exam_name}_{subject}")
+    
+    # 分隔线
+    st.markdown("---")
+    
+    # 创建并排视图
+    st.markdown(f"### 📊 {subject} - {exam_name} 双视图对比")
+    
+    # 使用tabs在同一行显示两种图表
+    tab1, tab2 = st.tabs(["🎯 极坐标图（分数段视角）", "📈 横向堆叠图（班级视角）"])
+    
+    with tab1:
+        # 创建极坐标图
+        fig_polar = create_extended_polar_chart(
+            df, subject, exam_name, 
+            use_percentage=use_percentage, 
+            auto_scale=auto_scale,
+            show_grid=show_grid,
+            grid_opacity=grid_opacity,
+            radial_scale_factor=radial_scale_factor
+        )
+        
+        # 调整柱状图透明度
+        for trace in fig_polar.data:
+            trace.opacity = bar_opacity
+        
+        # 更新布局高度
+        fig_polar.update_layout(height=polar_height)
+        
+        # 显示图表和控制按钮
+        col_controls, col_chart = st.columns([1, 4])
+        with col_controls:
+            if st.button("↻ 重置视图", key=f"reset_polar_{exam_name}_{subject}"):
+                st.rerun()
+            
+            # 下载图表按钮
+            st.download_button(
+                label="⬇️ 下载极坐标图",
+                data=fig_polar.to_html(),
+                file_name=f"{exam_name}_{subject}_polar_chart.html",
+                mime="text/html",
+                key=f"download_polar_{exam_name}_{subject}"
+            )
+        
+        with col_chart:
+            st.plotly_chart(fig_polar, use_container_width=True, 
+                          config={
+                              'displayModeBar': True,
+                              'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+                              'scrollZoom': True,
+                              'displaylogo': False
+                          })
+        
+        # 极坐标图操作指南
+        st.info("""
+        **💡 极坐标图操作小技巧：**
+        1. **调整视图**：双击图表可重置视图
+        2. **隐藏分段**：点击图例中的分数区间可隐藏/显示该分段
+        3. **单一分段**：双击某一分段图例可只显示该分段，再次双击回复原图
+        4. **查看详情**：将鼠标悬停在柱状图上查看详细信息
+        5. **保存视图**：使用图表右上角工具栏保存当前视图
+        """)
+    
+    with tab2:
+        # 创建横向堆叠柱状图
+        fig_bar = create_horizontal_stacked_bar_chart(
+            df, subject, exam_name,
+            selected_classes=selected_classes,
+            use_percentage=use_percentage
+        )
+        
+        # 更新布局高度
+        fig_bar.update_layout(height=bar_height)
+        
+        # 显示图表和控制按钮
+        col_controls2, col_chart2 = st.columns([1, 4])
+        with col_controls2:
+            if st.button("↻ 重置视图", key=f"reset_bar_{exam_name}_{subject}"):
+                st.rerun()
+            
+            # 下载图表按钮
+            st.download_button(
+                label="⬇️ 下载对比图",
+                data=fig_bar.to_html(),
+                file_name=f"{exam_name}_{subject}_bar_chart.html",
+                mime="text/html",
+                key=f"download_bar_{exam_name}_{subject}"
+            )
+        
+        with col_chart2:
+            st.plotly_chart(fig_bar, use_container_width=True, 
+                          config={
+                              'displayModeBar': True,
+                              'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+                              'scrollZoom': True,
+                              'displaylogo': False
+                          })
+        
+        # 横向堆叠图操作指南
+        st.info("""
+        **💡 横向堆叠图操作小技巧：**
+        1. **班级对比**：可清晰对比不同班级在各分数段的分布
+        2. **交互操作**：点击图例可隐藏/显示特定分数段
+        3. **数据查看**：悬停在柱状图上查看具体数据
+        4. **排序功能**：图表已按班级号自动排序
+        """)
+    
+    # 显示数据统计
+    st.markdown("---")
+    st.markdown(f"### 📈 {exam_name} - {subject} 详细分析")
+    
+    # 使用两列布局显示统计信息
+    col_stats1, col_stats2 = st.columns(2)
+    
+    with col_stats1:
+        st.markdown("##### 📊 分数区间统计")
+        interval_stats = stats.get('interval_stats', {})
+        if interval_stats:
+            interval_df = pd.DataFrame([
+                {
+                    '分数区间': interval,
+                    '总人数': int(stats_data.get('total', 0)),
+                    '班级平均': f"{stats_data.get('avg', 0):.1f}",
+                    '标准差': f"{stats_data.get('std', 0):.1f}",
+                    '占比(%)': f"{stats_data.get('percentage', 0):.1f}"
+                }
+                for interval, stats_data in interval_stats.items()
+            ])
+            st.dataframe(interval_df, use_container_width=True)
+    
+    with col_stats2:
+        st.markdown("##### 🏫 班级统计")
+        class_stats = stats.get('class_stats', {})
+        if class_stats:
+            class_df = pd.DataFrame([
+                {
+                    '班级': class_num,
+                    '总人数': int(class_data.get('total', 0)),
+                    '最高分段': class_data.get('max_interval', '无'),
+                    '最高分人数': int(class_data.get('max_value', 0))
+                }
+                for class_num, class_data in class_stats.items()
+            ])
+            st.dataframe(class_df, use_container_width=True)
+    
+    # 总体统计
+    st.markdown("##### 📈 总体统计")
+    col_total1, col_total2, col_total3, col_total4 = st.columns(4)
+    with col_total1:
+        st.metric("总人数", stats.get('total_students', 0))
+    with col_total2:
+        st.metric("班级数", stats.get('class_count', 0))
+    with col_total3:
+        st.metric("分数区间数", stats.get('interval_count', 0))
+    with col_total4:
+        avg_per_class = round(stats.get('total_students', 0) / max(stats.get('class_count', 1), 1))
+        st.metric("班级平均人数", avg_per_class)
+
+
+def single_subject_analysis_tab():
+    """单科目分析标签页 - 优化版，统一界面"""
+    st.markdown("### 📈 单科目图表分析")
+    
+    if 'exam_processor' not in st.session_state or not st.session_state.exam_processor.processed_data:
+        st.warning("请先上传并解析数据")
+        return
+    
+    processor = st.session_state.exam_processor
+    all_exam_data = processor.processed_data
+    exam_names = processor.exam_names
+    
+    # 选择考试
+    st.markdown("#### 🎯 选择考试和科目")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_exams = st.multiselect(
+            "选择考试（可多选）",
+            exam_names,
+            default=exam_names[:min(2, len(exam_names))],
+            help="最多选择3个考试进行对比",
+            key="subject_analysis_exams"
+        )
+    
+    with col2:
+        # 显示所有科目
+        selected_subject = st.selectbox(
+            "选择科目",
+            SUBJECTS,
+            help="选择要分析的科目",
+            key="subject_analysis_select"
+        )
+    
+    if len(selected_exams) > 3:
+        st.warning("最多选择3个考试进行对比，已自动选择前3个")
+        selected_exams = selected_exams[:3]
+    
+    if selected_exams and selected_subject:
+        # 检查所选考试中是否有该科目的数据
+        available_exams = []
+        exam_data_list = []
+        
+        for exam_name in selected_exams:
+            if exam_name in all_exam_data and selected_subject in all_exam_data[exam_name]['raw_data']:
+                df = all_exam_data[exam_name]['raw_data'][selected_subject]
+                stats = all_exam_data[exam_name]['summary_stats'][selected_subject]
+                if not df.empty:
+                    available_exams.append(exam_name)
+                    exam_data_list.append({
+                        'exam_name': exam_name,
+                        'df': df,
+                        'stats': stats
+                    })
+        
+        if not available_exams:
+            st.warning(f"选择的考试中没有 {selected_subject} 的有效数据")
+            return
+        
+        st.success(f"✅ 已选择 {len(available_exams)} 个考试: {', '.join(available_exams)}")
+        
+        # 为每个考试创建选项卡
+        if len(available_exams) > 1:
+            exam_tabs = st.tabs([f"📊 {exam}" for exam in available_exams])
+            
+            for idx, tab in enumerate(exam_tabs):
+                with tab:
+                    exam_data = exam_data_list[idx]
+                    df = exam_data['df']
+                    exam_name = exam_data['exam_name']
+                    stats = exam_data['stats']
+                    
+                    # 获取班级列表
+                    available_classes = processor.get_class_list(exam_name, selected_subject)
+                    
+                    # 创建统一界面
+                    create_unified_comparison_interface(df, selected_subject, exam_name, 
+                                                      available_classes, stats)
+        else:
+            # 只有一个考试，直接显示
+            exam_data = exam_data_list[0]
+            df = exam_data['df']
+            exam_name = exam_data['exam_name']
+            stats = exam_data['stats']
+            
+            # 获取班级列表
+            available_classes = processor.get_class_list(exam_name, selected_subject)
+            
+            # 创建统一界面
+            create_unified_comparison_interface(df, selected_subject, exam_name, 
+                                              available_classes, stats)
+
+
+def multi_exam_comparison_tab():
+    """多考试对比分析标签页 - 优化版（包含极坐标图对比）"""
+    st.markdown("### 📊 多考试对比分析")
+    
+    if 'exam_processor' not in st.session_state or not st.session_state.exam_processor.processed_data:
+        st.warning("请先上传并解析数据")
+        return
+    
+    processor = st.session_state.exam_processor
+    all_exam_data = processor.processed_data
+    exam_names = processor.exam_names
+    
+    # 选择考试
+    st.markdown("#### 🎯 选择考试和科目")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_exams = st.multiselect(
+            "选择要对比的考试（最多5个）",
+            exam_names,
+            default=exam_names[:min(3, len(exam_names))],
+            help="选择多个考试进行对比分析",
+            key="multi_exam_comparison_select"
+        )
+    
+    with col2:
+        selected_subject = st.selectbox(
+            "选择要对比的科目",
+            SUBJECTS,
+            help="选择要对比分析的科目",
+            key="comparison_subject_select"
+        )
+    
+    if len(selected_exams) > 5:
+        st.warning("最多选择5个考试进行对比")
+        selected_exams = selected_exams[:5]
+    
+    if selected_exams and selected_subject:
+        # 检查数据可用性
+        exam_data_dict = {}
+        available_exams = []
+        
+        for exam_name in selected_exams:
+            if exam_name in all_exam_data and selected_subject in all_exam_data[exam_name]['raw_data']:
+                df = all_exam_data[exam_name]['raw_data'][selected_subject]
+                if not df.empty:
+                    exam_data_dict[exam_name] = df
+                    available_exams.append(exam_name)
+        
+        if len(available_exams) < 1:
+            st.warning(f"选择的考试中没有 {selected_subject} 的有效数据")
+            return
+        
+        st.success(f"✅ 已选择 {len(available_exams)} 个考试进行对比: {', '.join(available_exams)}")
+        
+        # 图表配置
+        st.markdown("#### ⚙️ 对比配置")
+        col_config1, col_config2, col_config3, col_config4 = st.columns(4)
+        
+        with col_config1:
+            use_percentage = st.checkbox("使用百分比显示", value=True, 
+                                        help="将数据显示为百分比，便于对比不同班级的分布",
+                                        key="comparison_percentage_config")
+        
+        with col_config2:
+            auto_scale = st.checkbox("自动缩放", value=True, 
+                                   help="根据数据范围自动调整坐标轴，使图表更清晰",
+                                   key="comparison_autoscale_config")
+        
+        with col_config3:
+            show_grid = st.checkbox("显示网格", value=True, 
+                                   help="显示极坐标网格线",
+                                   key="comparison_grid_config")
+        
+        with col_config4:
+            chart_height = st.slider("图表高度", 400, 600, 500, 
+                                    help="调整图表显示高度",
+                                    key="comparison_height_config")
+        
+        # 1. 雷达图对比（仅在多个考试时显示）
+        if len(available_exams) >= 2:
+            st.markdown("#### 📈 雷达图对比")
+            
+            # 雷达图容器
+            radar_container = st.container()
+            with radar_container:
+                col_radar1, col_radar2, col_radar3 = st.columns([1, 3, 1])
+                with col_radar1:
+                    if st.button("↻ 重置雷达图", key="reset_radar_comparison", 
+                                help="重置雷达图到初始状态"):
+                        st.rerun()
+                
+                with col_radar2:
+                    st.markdown("**多考试对比雷达图**", 
+                              help="显示各考试在不同分数区间的分布对比")
+                
+                with col_radar3:
+                    # 下载雷达图按钮
+                    if st.button("⬇️ 下载雷达图", key="download_radar_comparison"):
+                        fig_radar = create_extended_radar_chart(exam_data_dict, selected_subject)
+                        fig_radar.update_layout(height=chart_height)
+                        st.download_button(
+                            label="点击下载",
+                            data=fig_radar.to_html(),
+                            file_name=f"{selected_subject}_雷达图对比.html",
+                            mime="text/html",
+                            key="download_radar_btn"
+                        )
+                
+                # 创建雷达图
+                fig_radar = create_extended_radar_chart(exam_data_dict, selected_subject)
+                fig_radar.update_layout(height=chart_height)
+                st.plotly_chart(fig_radar, use_container_width=True, 
+                              config={
+                                  'displayModeBar': True,
+                                  'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+                                  'scrollZoom': True,
+                                  'displaylogo': False
+                              })
+            
+            st.markdown("---")
+        
+        # 2. 极坐标图对比（从模块6A版整合）
+        st.markdown("#### 📊 极坐标图对比")
+        
+        # 创建并排的极坐标图
+        cols = st.columns(len(available_exams))
+        for idx, exam_name in enumerate(available_exams):
+            if len(cols) > idx:
+                with cols[idx]:
+                    df = exam_data_dict[exam_name]
+                    
+                    # 创建图表
+                    fig_polar = create_extended_polar_chart(
+                        df, selected_subject, exam_name, 
+                        use_percentage=use_percentage, 
+                        auto_scale=auto_scale,
+                        show_grid=show_grid
+                    )
+                    fig_polar.update_layout(
+                        height=chart_height, 
+                        showlegend=True,
+                        margin=dict(l=20, r=20, t=60, b=20)
+                    )
+                    
+                    # 重置按钮
+                    if st.button(f"↻ 重置视图", key=f"reset_polar_{exam_name}_{selected_subject}_{idx}"):
+                        st.rerun()
+                    
+                    st.plotly_chart(fig_polar, use_container_width=True, 
+                                  config={
+                                      'displayModeBar': True,
+                                      'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+                                      'scrollZoom': True,
+                                      'displaylogo': False
+                                  })
+        
+        st.markdown("---")
+        
+        # 3. 并排横向堆叠图对比
+        st.markdown("#### 📊 并排班级对比图")
+        
+        # 选择对比的班级
+        st.markdown("##### 🎯 选择要对比的班级")
+        
+        # 获取所有考试中的班级列表
+        all_classes = set()
+        for exam_name in available_exams:
+            classes = processor.get_class_list(exam_name, selected_subject)
+            all_classes.update(classes)
+        
+        if all_classes:
+            all_classes = sorted(list(all_classes))
+            selected_classes = st.multiselect(
+                "选择班级进行对比（不选默认显示所有班级）",
+                all_classes,
+                help="可多选班级进行对比，默认显示所有班级",
+                key="comparison_classes_select"
+            )
+            
+            # 创建并排的横向堆叠图
+            cols = st.columns(len(available_exams))
+            for idx, exam_name in enumerate(available_exams):
+                if len(cols) > idx:
+                    with cols[idx]:
+                        df = exam_data_dict[exam_name]
+                        
+                        # 创建横向堆叠柱状图
+                        fig_bar = create_horizontal_stacked_bar_chart(
+                            df, selected_subject, exam_name,
+                            selected_classes=selected_classes,
+                            use_percentage=use_percentage
+                        )
+                        fig_bar.update_layout(
+                            height=chart_height, 
+                            showlegend=True,
+                            margin=dict(l=20, r=20, t=60, b=20)
+                        )
+                        
+                        # 重置按钮
+                        if st.button(f"↻ 重置", key=f"reset_comparison_bar_{exam_name}_{selected_subject}_{idx}", 
+                                   help=f"重置{exam_name}的图表"):
+                            st.rerun()
+                        
+                        st.plotly_chart(fig_bar, use_container_width=True, 
+                                      config={
+                                          'displayModeBar': True,
+                                          'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+                                          'scrollZoom': True,
+                                          'displaylogo': False
+                                      })
+        else:
+            st.warning("未找到班级数据")
+        
+        st.markdown("---")
+        
+        # 4. 数据表格对比
+        st.markdown("#### 📋 数据表格对比")
+        
+        # 创建对比表格
+        comparison_data = []
+        for exam_name in available_exams:
+            df = exam_data_dict[exam_name]
+            stats = all_exam_data[exam_name]['summary_stats'][selected_subject]
+            
+            exam_row = {'考试名称': exam_name}
+            
+            # 添加总体统计
+            exam_row['总人数'] = stats.get('total_students', 0)
+            exam_row['班级数'] = stats.get('class_count', 0)
+            exam_row['分数区间数'] = stats.get('interval_count', 0)
+            exam_row['班级平均人数'] = round(stats.get('total_students', 0) / max(stats.get('class_count', 1), 1), 1)
+            
+            # 添加分数区间数据
+            interval_stats = stats.get('interval_stats', {})
+            for interval, interval_data in interval_stats.items():
+                exam_row[f"{interval}_总人数"] = interval_data.get('total', 0)
+                exam_row[f"{interval}_占比(%)"] = interval_data.get('percentage', 0)
+            
+            comparison_data.append(exam_row)
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        st.dataframe(comparison_df, use_container_width=True)
+        
+        # 下载对比数据
+        col_download1, col_download2 = st.columns(2)
+        with col_download1:
+            csv = comparison_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 下载对比数据 (CSV)",
+                data=csv,
+                file_name=f"{selected_subject}_考试对比.csv",
+                mime="text/csv",
+                help="下载CSV格式的对比数据"
+            )
+        
+        with col_download2:
+            # 导出HTML报表
+            html_content = f"""
+            <html>
+            <head>
+                <title>{selected_subject} 考试对比分析</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    h1 {{ color: #2c3e50; }}
+                    .summary {{ margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-radius: 5px; }}
+                    table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+                    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+                    th {{ background-color: #f2f2f2; }}
+                </style>
+            </head>
+            <body>
+                <h1>{selected_subject} 考试对比分析</h1>
+                <p>生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p>对比考试: {', '.join(available_exams)}</p>
+                {comparison_df.to_html(index=False, classes='dataframe')}
+            </body>
+            </html>
+            """
+            
+            st.download_button(
+                label="📥 下载分析报告 (HTML)",
+                data=html_content.encode('utf-8'),
+                file_name=f"{selected_subject}_考试对比报告.html",
+                mime="text/html",
+                help="下载HTML格式的分析报告"
+            )
+        
+        st.markdown("---")
+
+
+def module_enhanced_polar_chart_generator():
+    """模块6: 增强版多考试极坐标图表生成器"""
+    st.markdown("## 🌟 6. 增强版多考试极坐标图表生成器")
+    
+    st.markdown("""
+    **🎯 功能特性**：
+    1. 📁 **多考试数据导入**：上传包含多个考试sheet的Excel文件
+    2. 🔍 **智能数据解析**：严格按照科目顺序解析数据
+    3. 📈 **统一界面**：极坐标图和横向堆叠图在同一界面展示
+    4. 🎯 **直观切换**：通过选项卡轻松切换两种视图
+    5. 📊 **多维考试对比**：雷达图、极坐标图对比、并排班级对比、数据表格
+    6. 📋 **详细统计分析**：提供丰富的统计指标和可视化
+    """)
+    
+    st.info("""
+    **✨ 界面优化**：
+    - **统一配置界面**：两种图表的配置在同一面板，无需来回切换
+    - **选项卡切换**：通过顶部选项卡轻松在极坐标图和横向堆叠图之间切换
+    - **并排显示**：多考试对比时，并排显示各考试的横向堆叠图
+    - **极坐标图对比**：新增并排极坐标图对比功能
+    - **智能布局**：根据考试数量自动调整界面布局
+    - **一键下载**：每个图表都有独立的下载按钮
+    """)
+    
+    st.info("""
+    **📋 科目顺序说明**：
+    系统将严格按照以下顺序解析科目数据：
+    1. 语文 2. 数学 3. 英语 4. 俄语 5. 日语 
+    6. 物理 7. 化学 8. 生物 9. 历史 10. 政治 11. 地理
+    """)
+    
+    # 初始化处理器
+    if 'exam_processor' not in st.session_state:
+        st.session_state.exam_processor = ExamDataProcessor()
+    
+    # 功能选择标签页
+    tab1, tab2, tab3 = st.tabs(["📁 数据导入", "📈 单科目分析", "📊 多考试对比"])
+    
+    with tab1:
+        data_import_tab()
+    
+    with tab2:
+        single_subject_analysis_tab()
+    
+    with tab3:
+        multi_exam_comparison_tab()
+
+
+
+
+
+
+
+# ============================================
 # 主函数
 # ============================================
 def main():
@@ -5097,8 +6476,6 @@ def main():
     
     # 页面配置
     
-    
-    
     # 页面标题
     st.title("🎓 学生成绩查询系统")
     st.markdown("""
@@ -5110,18 +6487,19 @@ def main():
     - 📈 **增强趋势分析**：使用加权线性回归进行趋势预测
     - 🔮 **成绩预测**：提供下次考试的成绩预测
     - 💡 **智能学习建议**：基于分析结果提供个性化建议
+    - 🌊 **阶梯瀑布流图**：多维度成绩对比可视化
     """)
     
     # 创建顶边栏
     st.markdown("---")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📁 1. 导入支撑文件",
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📁 1. 导入数据文件",
         "🔍 2. 单个学生查询", 
         "📋 3. 批量学生查询",
         "📈 4. 学生分析预测",
-        "🏫 5. 班级分析对比"
+        "🏫 5. 班级分析对比",
+        "🌟 6. 多考试极坐标图表",
     ])
-    
     with tab1:
         module_import_data()
     
@@ -5136,13 +6514,15 @@ def main():
     
     with tab5:
         module_class_analysis()
+        
+    with tab6:  
+        module_enhanced_polar_chart_generator()
+    
     
     # 页脚
     st.markdown("---")
-    st.caption("© 2026 学生成绩查询系统 | 版本 4.5 | 开发者：小基👩🏻‍🌾 ")
+    st.caption("© 2026 学生成绩查询系统 | 版本 6.2 | 开发者：小基👩🏻‍🌾 ")
 
 # 运行应用
 if __name__ == "__main__":
     main()
-
-
